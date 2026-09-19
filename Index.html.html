@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>War Ledger — Torn faction war tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#14171B; --panel:#1C2025; --panel2:#22272D; --line:#2A2F36;
+  --text:#CDD3D8; --dim:#8A939B; --faint:#5A626B;
+  --up:#7FB069; --down:#D0555B; --amber:#D9A036; --steel:#5E8CA8;
+  --tl-ok:#2E4633; --tl-ehosp:#7A3336; --tl-shosp:#8A6420; --tl-travel:#2F4A5C; --tl-other:#3A3F46;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:"Barlow Semi Condensed","Arial Narrow",Arial,sans-serif;
+  font-size:15px; line-height:1.45;
+  font-variant-numeric:tabular-nums;
+  padding:0 0 60px;
+}
+button{font:inherit; cursor:pointer; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:4px; padding:5px 12px}
+button:hover{border-color:var(--dim)}
+button:focus-visible, input:focus-visible, select:focus-visible{outline:2px solid var(--amber); outline-offset:1px}
+button.primary{background:var(--amber); border-color:var(--amber); color:#1A1408; font-weight:600}
+button.ghost{background:none; border:none; color:var(--amber); padding:2px 4px; text-decoration:underline}
+input,select{font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:5px 8px}
+input[type=datetime-local]{color-scheme:dark}
+.wrap{max-width:1060px; margin:0 auto; padding:0 14px}
+header.top{border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:20}
+.topline{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; padding:10px 0 8px}
+.topline h1{font-size:19px; font-weight:700; letter-spacing:.01em}
+.topline h1 span{color:var(--amber)}
+.vsline{font-size:16px; font-weight:600}
+.vsline .score{font-weight:700}
+.vsline .them{color:var(--down)}
+.vsline .us{color:var(--up)}
+.statusdot{display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--faint); margin-right:5px; vertical-align:1px}
+.statusdot.live{background:var(--up)}
+.statusdot.err{background:var(--down)}
+.meta{color:var(--dim); font-size:13px}
+.banner{padding:8px 14px; font-size:14px; background:#3A2225; border-bottom:1px solid var(--down); color:#E8B9BC; display:none}
+.banner.show{display:block}
+section{margin-top:18px}
+.card{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px}
+h2{font-size:15px; font-weight:700; color:var(--dim); margin-bottom:10px; letter-spacing:.02em}
+.row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.row + .row{margin-top:10px}
+label.inl{color:var(--dim); font-size:13px; display:flex; align-items:center; gap:6px}
+.hint{color:var(--dim); font-size:13px; margin-top:8px; max-width:70ch}
+.hint b{color:var(--text)}
+/* setup */
+#setup .keyrow input{flex:1; min-width:220px; font-family:ui-monospace,monospace; letter-spacing:.05em}
+/* slider */
+.scrub{position:relative; height:96px; margin-top:6px}
+.scrub svg{position:absolute; inset:0; width:100%; height:100%; display:block}
+.scrub input[type=range]{
+  position:absolute; inset:0; width:100%; height:100%; margin:0;
+  -webkit-appearance:none; appearance:none; background:transparent;
+}
+.scrub input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; width:3px; height:96px; background:var(--amber); cursor:ew-resize; border-radius:0;
+}
+.scrub input[type=range]::-moz-range-thumb{width:3px; height:96px; background:var(--amber); border:none; border-radius:0; cursor:ew-resize}
+.scrub-labels{display:flex; justify-content:space-between; color:var(--faint); font-size:12px; margin-top:2px}
+.scrubhead{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px}
+.scrubtime{font-size:15px; font-weight:600}
+.scrubtime .t{color:var(--amber)}
+/* table */
+.tblwrap{overflow-x:auto; margin-top:4px}
+table{border-collapse:collapse; width:100%; min-width:760px; font-size:14px}
+th,td{padding:5px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap}
+th{color:var(--dim); font-weight:600; cursor:pointer; user-select:none; position:sticky; top:0; background:var(--panel)}
+th.sorted{color:var(--amber)}
+th:first-child,td:first-child{text-align:left}
+td.name{font-weight:600}
+td .sub, th .sub{color:var(--faint); font-size:12px; font-weight:400}
+.pos{color:var(--up)} .neg{color:var(--down)} .zero{color:var(--faint)}
+.prepost b{font-weight:600}
+.prepost .pre{color:var(--dim)}
+.st{font-size:13px}
+.st.hosp{color:var(--down)} .st.shosp{color:var(--amber)} .st.travel{color:var(--steel)} .st.ok{color:var(--up)} .st.other{color:var(--dim)}
+tr.me td{background:#20262C}
+/* timelines */
+.tl-row{display:flex; align-items:center; gap:10px; margin-bottom:3px}
+.tl-name{width:130px; min-width:130px; text-align:right; font-size:13px; color:var(--dim); overflow:hidden; text-overflow:ellipsis}
+.tl-band{flex:1; height:16px; background:var(--panel2); position:relative; border-radius:2px; overflow:hidden}
+.tl-seg{position:absolute; top:0; bottom:0}
+.tl-mark{position:absolute; top:0; bottom:0; width:2px; background:var(--amber); opacity:.9}
+.legend{display:flex; gap:14px; flex-wrap:wrap; color:var(--dim); font-size:13px; margin-top:10px}
+.legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px}
+.termsline{border-left:2px dashed var(--amber)}
+details.settings{margin-top:16px; color:var(--dim)}
+details.settings summary{cursor:pointer}
+.foot{margin-top:22px; color:var(--faint); font-size:13px}
+@media (max-width:640px){
+  body{font-size:14px}
+  .tl-name{width:92px; min-width:92px}
+}
+@media (prefers-reduced-motion:reduce){ *{transition:none!important; animation:none!important} }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="topline">
+      <h1>War <span>Ledger</span></h1>
+      <div class="vsline" id="vsline" hidden></div>
+      <div class="meta" style="margin-left:auto"><span class="statusdot" id="dot"></span><span id="pollmeta">not connected</span></div>
+    </div>
+  </div>
+  <div class="banner" id="banner"></div>
+</header>
+
+<div class="wrap">
+
+<!-- SETUP -->
+<section id="setup" class="card">
+  <h2>Connect to the Torn API</h2>
+  <div class="row keyrow">
+    <input id="apikey" type="password" placeholder="Paste a Limited API key" autocomplete="off" spellcheck="false">
+    <button class="primary" id="connectBtn">Connect</button>
+  </div>
+  <p class="hint">Use a <b>Limited</b> key (torn.com → Settings → API keys), from a member who has the <b>API access</b> faction permission — that's what unlocks the faction attack log. The key is stored only in this browser and sent only to api.torn.com.</p>
+</section>
+
+<!-- WAR PICK -->
+<section id="warpick" class="card" hidden>
+  <h2>War window</h2>
+  <div class="row">
+    <select id="warSel"></select>
+    <button id="applyWar" class="primary">Track this war</button>
+  </div>
+  <div class="row">
+    <label class="inl">Start <input type="datetime-local" id="cStart"></label>
+    <label class="inl">End <input type="datetime-local" id="cEnd"></label>
+    <span class="meta">(custom window — used if "Custom" is selected; leave end blank for ongoing)</span>
+  </div>
+</section>
+
+<!-- TERMS -->
+<section id="termsCard" class="card" hidden>
+  <h2>Terms</h2>
+  <div class="row">
+    <label class="inl">Terms agreed at (TCT) <input type="datetime-local" id="termsInput"></label>
+    <button id="termsNow">Terms made now</button>
+    <button id="termsSuggest">Suggest from stats</button>
+    <button id="termsClear" class="ghost">clear</button>
+  </div>
+  <p class="hint" id="termsHint">Everything in the table splits into before / after this moment. "Suggest" looks for the point where incoming hits on your side jump sharply.</p>
+</section>
+
+<!-- SCRUB -->
+<section id="scrubCard" class="card" hidden>
+  <div class="scrubhead">
+    <h2 style="margin:0">Timeline</h2>
+    <div class="scrubtime">Showing up to <span class="t" id="scrubTimeLbl">–</span></div>
+    <button id="liveBtn" class="primary">Live</button>
+  </div>
+  <div class="scrub">
+    <svg id="spark" preserveAspectRatio="none"></svg>
+    <input type="range" id="scrub" min="0" max="1000" value="1000" aria-label="Scrub through the war timeline">
+  </div>
+  <div class="scrub-labels"><span id="axL"></span><span id="axM"></span><span id="axR"></span></div>
+  <p class="hint">Bars above the line: your hits landed (respect gained). Below: hits taken (respect lost). Drag the marker to replay the war — the table and turtle board follow it.</p>
+</section>
+
+<!-- TABLE -->
+<section id="tableCard" class="card" hidden>
+  <h2>Member ledger <span class="sub" id="tblScope"></span></h2>
+  <div class="tblwrap">
+    <table id="tbl">
+      <thead><tr id="tblHead"></tr></thead>
+      <tbody id="tblBody"></tbody>
+      <tfoot><tr id="tblFoot"></tr></tfoot>
+    </table>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button id="csvBtn">Export CSV</button>
+    <span class="meta" id="attackMeta"></span>
+  </div>
+</section>
+
+<!-- TURTLE BOARD -->
+<section id="tlCard" class="card" hidden>
+  <h2>Turtle board — where everyone's been</h2>
+  <div id="tlRows"></div>
+  <div class="legend">
+    <span><i style="background:var(--tl-ok)"></i>okay / attackable</span>
+    <span><i style="background:var(--tl-ehosp)"></i>hospitalised by enemy</span>
+    <span><i style="background:var(--tl-shosp)"></i>self-hosp / other hosp</span>
+    <span><i style="background:var(--tl-travel)"></i>travelling or abroad</span>
+    <span><i style="background:var(--tl-other)"></i>jail / other</span>
+    <span><i style="background:var(--amber)"></i>terms marker</span>
+  </div>
+  <p class="hint" id="tlHint">Status is sampled from the members list while this page is open, so bands start from when tracking began. Hit-log data (the table above) backfills automatically either way.</p>
+</section>
+
+<!-- ENEMY WATCH -->
+<section id="enemyCard" class="card" hidden>
+  <h2>Enemy watch — who's attackable, who's medding out</h2>
+  <div class="tblwrap">
+    <table id="etbl" style="min-width:560px">
+      <thead><tr><th style="text-align:left">Enemy</th><th>Now</th><th>Med-outs</th><th>Our hits on them</th><th style="text-align:left">Farmed by</th></tr></thead>
+      <tbody id="etblBody"></tbody>
+    </table>
+  </div>
+  <p class="hint" id="enemyHint">A med-out is logged when an enemy leaves hospital well before their timer — meds or a revive. Attackable players sort to the top; hospital exits show a countdown. Sampled while the page is open.</p>
+</section>
+
+<!-- RETAL WATCH -->
+<section id="retalCard" class="card" hidden>
+  <h2>Retal watch</h2>
+  <div id="retalSummary" class="row" style="font-size:15px"></div>
+  <div id="retalMissed" class="hint"></div>
+  <p class="hint">Every incoming hit opens a ~5 minute window where hitting the attacker back pays bonus respect. Claimed = someone on your side hit that enemy inside the window (approximate, from the attack log).</p>
+</section>
+
+<!-- HIT QUALITY -->
+<section id="qualityCard" class="card" hidden>
+  <h2>Hit quality — who's punching down</h2>
+  <div class="tblwrap">
+    <table id="qtbl" style="min-width:600px">
+      <thead><tr><th style="text-align:left">Member</th><th>War hits</th><th>Avg respect / hit</th><th>Avg fair fight</th><th>Avg target lvl</th><th>Low-value hits</th></tr></thead>
+      <tbody id="qtblBody"></tbody>
+    </table>
+  </div>
+  <p class="hint">Fair fight runs from 1.00 (far below you — pays almost nothing) to 3.00 (an even or brave fight). A low-value hit here is fair fight ≤ 1.25: fine occasionally, but members living in this column are farming easy targets that would serve your newer players better. Sorted worst-first.</p>
+</section>
+
+<details class="settings wrap" id="settings" hidden>
+  <summary>Polling &amp; data</summary>
+  <div class="card" style="margin-top:8px">
+    <div class="row">
+      <label class="inl">Attack log every <input type="number" id="pAtk" min="30" step="30" style="width:70px"> s</label>
+      <label class="inl">Member status every <input type="number" id="pMem" min="30" step="30" style="width:70px"> s</label>
+      <button id="pauseBtn">Pause polling</button>
+    </div>
+    <div class="row">
+      <button id="forgetWar" class="ghost">clear this war's data</button>
+      <button id="forgetAll" class="ghost">forget everything incl. API key</button>
+    </div>
+  </div>
+</details>
+
+<p class="foot wrap">All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+</div>
+
+<script>
+"use strict";
+/* ---------- state ---------- */
+const LS = {
+  cfg:"twl_cfg", war:"twl_war",
+  atk:id=>"twl_atk_"+id, snap:id=>"twl_snap_"+id,
+  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id
+};
+let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60};
+let war = load(LS.war) || null;   // {facId,facName,warId,oppId,oppName,start,end,terms,label,custom}
+let attacks = [];                  // normalised, sorted by t
+let attackIds = new Set();
+let snaps = [];                    // [{t, ch:{id:[state,until,cause]}}]
+let memberDir = {};                // id -> {name,pos}
+let lastStatus = {};               // id -> {state,until,cause,since}
+let enemyDir = {};                 // id -> {name,lvl}
+let enemyStatus = {};              // id -> {state,until,since}
+let medEvents = [];                // [{id,t,early}]  enemy left hosp early
+let chainInfo = null;              // {current,max,endTs,fetchedAt}
+let warScores = null;              // {us,them,target,chain}
+let timers = {atk:null,mem:null,scr:null};
+let paused = false;
+let liveMode = true;
+let scrubT = 0;
+let sortKey = "net", sortDir = -1;
+let lastPollOk = null, lastErr = "";
+
+function load(k){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null }catch(e){ return null } }
+function save(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(e){ console.warn("storage full?",e) } }
+const $ = id=>document.getElementById(id);
+const now = ()=>Math.floor(Date.now()/1000);
+
+/* ---------- torn api ---------- */
+async function api(path, params={}){
+  const u = new URL("https://api.torn.com/v2"+path);
+  for(const [k,v] of Object.entries(params)) if(v!==undefined&&v!==null&&v!=="") u.searchParams.set(k,v);
+  u.searchParams.set("key", cfg.key);
+  u.searchParams.set("comment","WarLedger");
+  let r, j;
+  try{ r = await fetch(u); j = await r.json(); }
+  catch(e){ throw new Error("Network problem reaching api.torn.com — check your connection."); }
+  if(j && j.error){
+    const c=j.error.code, m=j.error.error;
+    const map={2:"That API key isn't valid — check for typos.",5:"Rate limited by Torn — easing off.",7:"This key can't read that faction's data.",9:"Torn's API is temporarily disabled.",16:"This key's access level is too low, or the key owner doesn't have the faction 'API access' permission (needed for the attack log)."};
+    const err=new Error((map[c]||m)+" (code "+c+")"); err.code=c; throw err;
+  }
+  return j;
+}
+
+/* ---------- connect flow ---------- */
+$("connectBtn").onclick = async ()=>{
+  const k = $("apikey").value.trim();
+  if(!k){ showErr("Paste an API key first."); return }
+  cfg.key = k;
+  $("connectBtn").disabled = true; $("connectBtn").textContent="Checking…";
+  try{
+    const b = await api("/faction/basic");
+    const basic = b.basic || b;
+    // verify attack-log access early with a tiny call
+    await api("/faction/attacks", {limit:1});
+    cfg.facId = basic.id; cfg.facName = basic.name;
+    save(LS.cfg, cfg);
+    clearErr();
+    await loadWarList();
+    $("setup").hidden = true; $("warpick").hidden = false;
+  }catch(e){ showErr(e.message) }
+  $("connectBtn").disabled = false; $("connectBtn").textContent="Connect";
+};
+
+async function loadWarList(){
+  const sel = $("warSel"); sel.innerHTML="";
+  let list=[];
+  try{
+    const rw = await api("/faction/rankedwars");
+    list = (rw.rankedwars||rw.wars||[]).map(normWar).filter(Boolean)
+           .sort((a,b)=>b.start-a.start).slice(0,12);
+  }catch(e){ /* rankedwars may 404 for some keys; custom still works */ }
+  for(const w of list){
+    const o=document.createElement("option");
+    const status = !w.end ? "LIVE" : (w.end> now() ? "scheduled" : fmtDate(w.end));
+    o.value = "rw:"+w.id;
+    o.textContent = `${w.oppName}  —  ${fmtDate(w.start)}  (${status})`;
+    o.dataset.w = JSON.stringify(w);
+    sel.appendChild(o);
+  }
+  const oc=document.createElement("option"); oc.value="custom"; oc.textContent="Custom window (event / raid / practice)";
+  sel.appendChild(oc);
+}
+
+function normWar(w){
+  if(!w) return null;
+  const start = w.start ?? w.war?.start, end = (w.end ?? w.war?.end) || 0;
+  const facs = w.factions || [];
+  let opp = facs.find(f=> (f.id||f.faction_id) != cfg.facId) || {};
+  return { id: w.id ?? w.war_id ?? start, start, end: end||0,
+    target: w.target ?? w.war?.target ?? null,
+    oppId: opp.id ?? opp.faction_id, oppName: opp.name || ("Faction "+(opp.id||"?")) };
+}
+
+$("applyWar").onclick = ()=>{
+  const sel = $("warSel");
+  if(sel.value==="custom"){
+    const s = $("cStart").value ? Math.floor(new Date($("cStart").value+"Z").getTime()/1000) : null;
+    const e = $("cEnd").value ? Math.floor(new Date($("cEnd").value+"Z").getTime()/1000) : 0;
+    if(!s){ showErr("A custom window needs a start time."); return }
+    war = {facId:cfg.facId, facName:cfg.facName, warId:"custom"+s, oppId:null, oppName:"(all opponents)", start:s, end:e, terms:null, custom:true};
+  }else{
+    const opt = sel.selectedOptions[0]; if(!opt||!opt.dataset.w){ showErr("Pick a war first."); return }
+    const w = JSON.parse(opt.dataset.w);
+    war = {facId:cfg.facId, facName:cfg.facName, warId:w.id, oppId:w.oppId, oppName:w.oppName, start:w.start, end:w.end||0, terms:null, target:w.target};
+  }
+  save(LS.war, war);
+  attacks = load(LS.atk(war.warId))||[]; attackIds = new Set(attacks.map(a=>a.id));
+  snaps = load(LS.snap(war.warId))||[];
+  rebuildStatusFromSnaps();
+  startTracking();
+};
+
+/* ---------- attack sync ---------- */
+function normAtk(a){
+  const att = a.attacker||{}, def = a.defender||{};
+  return {
+    id: a.id ?? a.code, t: a.ended || a.started,
+    aId: att.id ?? null, aName: att.name || "someone (stealthed)",
+    aFac: att.faction ? (att.faction.id ?? att.faction) : null,
+    dId: def.id ?? null, dName: def.name || "?",
+    dFac: def.faction ? (def.faction.id ?? def.faction) : null,
+    res: a.result || "", rg: +(a.respect_gain ?? a.respect ?? 0), rl: +(a.respect_loss ?? 0),
+    ff: (a.modifiers && typeof a.modifiers.fair_fight==="number") ? +a.modifiers.fair_fight : null,
+    dl: (def.level ?? null),
+    rw: !!(a.is_ranked_war ?? a.ranked_war ?? (a.modifiers && a.modifiers.war>1))
+  };
+}
+async function syncAttacks(){
+  if(!war) return;
+  let from = attacks.length ? attacks[attacks.length-1].t : war.start;
+  const to = war.end && war.end < now() ? war.end+300 : undefined;
+  let pages = 0;
+  while(pages++ < 30){
+    const r = await api("/faction/attacks", {limit:100, sort:"ASC", from, to});
+    const batch = (r.attacks||[]).map(normAtk).filter(a=>a.t>=war.start && (!war.end || a.t<=war.end+300));
+    let added = 0;
+    for(const a of batch){ if(!attackIds.has(a.id)){ attackIds.add(a.id); attacks.push(a); added++ } }
+    if((r.attacks||[]).length < 100) break;
+    const lastT = batch.length ? batch[batch.length-1].t : from+1;
+    if(lastT<=from && !added) break;
+    from = lastT;
+  }
+  attacks.sort((x,y)=>x.t-y.t);
+  save(LS.atk(war.warId), attacks);
+}
+
+/* which attacks count for this war */
+function isWarAtk(a){
+  if(war.custom) return true;
+  if(a.rw) return true;
+  return (a.aFac==war.facId && a.dFac==war.oppId) || (a.aFac==war.oppId && a.dFac==war.facId);
+}
+const WIN = new Set(["Attacked","Hospitalized","Hospitalised","Mugged","Looted","Arrested"]);
+
+/* ---------- member status polling ---------- */
+function classifyHosp(m, t){
+  const d = ((m.status&&(m.status.details||m.status.description))||"").toLowerCase();
+  if(d.includes("hospitalized by")||d.includes("hospitalised by")||d.includes("attacked by")||d.includes("mugged by")) return "enemy";
+  // fall back to the attack log: hospitalised as defender within the last 3 min
+  for(let i=attacks.length-1;i>=0;i--){
+    const a=attacks[i]; if(a.t < t-180) break;
+    if(a.dId==m.id && /hospital/i.test(a.res)) return "enemy";
+  }
+  return "self";
+}
+async function pollMembers(){
+  const r = await api("/faction/members");
+  const list = r.members || [];
+  const t = now(); const ch = {};
+  for(const m of list){
+    memberDir[m.id] = {name:m.name, pos:m.position||""};
+    const st = m.status||{}; const state = st.state||"Okay"; const until = st.until||0;
+    let cause = "";
+    if(state==="Hospital") cause = classifyHosp(m,t);
+    const prev = lastStatus[m.id];
+    if(!prev || prev.state!==state || prev.cause!==cause){
+      lastStatus[m.id] = {state, until, cause, since:t};
+      ch[m.id] = [state, until, cause];
+    } else { lastStatus[m.id].until = until; }
+  }
+  if(Object.keys(ch).length){ snaps.push({t, ch}); save(LS.snap(war.warId), snaps); }
+}
+async function pollEnemy(){
+  if(!war || !war.oppId) return;
+  const r = await api("/faction/"+war.oppId+"/members");
+  const t = now();
+  for(const m of (r.members||[])){
+    enemyDir[m.id] = {name:m.name, lvl:m.level||0};
+    const st = m.status||{}; const state = st.state||"Okay"; const until = st.until||0;
+    const prev = enemyStatus[m.id];
+    if(prev && prev.state==="Hospital" && state!=="Hospital" && prev.until && t < prev.until-90){
+      medEvents.push({id:m.id, t, early:prev.until-t});
+      save(LS.med(war.warId), medEvents);
+    }
+    if(!prev || prev.state!==state) enemyStatus[m.id]={state,until,since:t};
+    else enemyStatus[m.id].until=until;
+  }
+  save(LS.esnap(war.warId), {dir:enemyDir, status:enemyStatus});
+}
+async function pollChain(){
+  try{
+    const r = await api("/faction/chain");
+    const c = r.chain || r;
+    if(c && typeof c.current==="number"){
+      const t=now();
+      let endTs = 0;
+      if(c.end && c.end>1e9) endTs=c.end;
+      else if(typeof c.timeout==="number") endTs = c.timeout>1e9 ? c.timeout : t+c.timeout;
+      chainInfo = {current:c.current, max:c.max||0, endTs, fetchedAt:t};
+    }
+  }catch(e){ /* chain view can be permission-gated; ignore */ }
+}
+function rebuildStatusFromSnaps(){
+  lastStatus = {};
+  for(const s of snaps) for(const [id,v] of Object.entries(s.ch))
+    lastStatus[id]={state:v[0],until:v[1],cause:v[2],since:s.t};
+}
+
+/* ---------- war score ---------- */
+async function pollScore(){
+  if(war.custom) return;
+  try{
+    const rw = await api("/faction/rankedwars");
+    const w = (rw.rankedwars||[]).find(x=>(x.id??x.war_id)==war.warId);
+    if(w){
+      const facs=w.factions||[];
+      const us=facs.find(f=>(f.id??f.faction_id)==war.facId)||{}, them=facs.find(f=>(f.id??f.faction_id)==war.oppId)||{};
+      warScores={us:us.score||0,them:them.score||0,target:w.target??war.target,chain:us.chain||0};
+      if((w.end??w.war?.end) && !war.end){ war.end=w.end??w.war.end; save(LS.war,war) }
+    }
+  }catch(e){}
+}
+
+/* ---------- polling loops ---------- */
+function startTracking(){
+  $("warpick").hidden = true;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","retalCard","qualityCard"]) $(id).hidden=false;
+  $("enemyCard").hidden = !war.oppId;
+  const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
+  medEvents = load(LS.med(war.warId))||[];
+  $("settings").hidden=false;
+  $("pAtk").value=cfg.pAtk; $("pMem").value=cfg.pMem;
+  if(war.terms) $("termsInput").value = tsToLocalInput(war.terms);
+  liveMode = true; scrubT = clampT(now());
+  schedule(); tick(true);
+}
+function schedule(){
+  clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
+  timers.atk = setInterval(()=>tick(false), Math.max(30,cfg.pAtk)*1000);
+  timers.mem = setInterval(async ()=>{ if(paused||!war) return; try{ await pollMembers(); await pollEnemy(); await pollChain(); ok(); renderAll() }catch(e){ fail(e) } }, Math.max(30,cfg.pMem)*1000);
+  timers.scr = setInterval(()=>{ if(liveMode){ scrubT=clampT(now()); renderScrubOnly() } renderHeader(); renderEnemy() }, 15000);
+}
+async function tick(first){
+  if(paused||!war) return;
+  try{
+    await syncAttacks();
+    if(first){ await pollMembers(); await pollEnemy(); await pollChain(); await pollScore() }
+    else if(Math.random()<0.4) await pollScore();
+    ok(); renderAll();
+  }catch(e){ fail(e) }
+}
+function ok(){ lastPollOk=now(); lastErr=""; clearErr(); updDot() }
+function fail(e){ lastErr=e.message; showErr(e.message); updDot(); if(e.code===5){ /* back off one cycle */ } }
+function updDot(){
+  const d=$("dot");
+  d.className="statusdot "+(paused?"":(lastErr?"err":"live"));
+  $("pollmeta").textContent = paused ? "paused" : lastErr ? "error" : (lastPollOk? "updated "+fmtClock(lastPollOk):"connecting…");
+}
+
+/* ---------- aggregation ---------- */
+function aggregate(T){
+  const rows = {}; // id -> stats
+  const get = id => rows[id] || (rows[id]={id, of1:0,of2:0, rg1:0,rg2:0, ag1:0,ag2:0, rl1:0,rl2:0, as:0, lastHit:0});
+  const terms = war.terms;
+  for(const a of attacks){
+    if(a.t>T) break;
+    if(!isWarAtk(a)) continue;
+    const post = terms ? a.t>=terms : false;
+    if(a.aFac==war.facId && a.aId){          // outgoing
+      const r=get(a.aId);
+      if(WIN.has(a.res)){ post? r.of2++ : r.of1++; }
+      if(a.res==="Assist") r.as++;
+      post? r.rg2+=a.rg : r.rg1+=a.rg;
+      r.lastHit=Math.max(r.lastHit,a.t);
+    }
+    if(a.dFac==war.facId && a.dId){          // incoming
+      const r=get(a.dId);
+      if(WIN.has(a.res)){ post? r.ag2++ : r.ag1++; }
+      post? r.rl2+=a.rl : r.rl1+=a.rl;
+    }
+  }
+  for(const id of Object.keys(memberDir)) get(+id);
+  const out = Object.values(rows).map(r=>{
+    r.name = (memberDir[r.id]&&memberDir[r.id].name) || namesFromAttacks(r.id) || ("["+r.id+"]");
+    r.rg=r.rg1+r.rg2; r.rl=r.rl1+r.rl2; r.of=r.of1+r.of2; r.ag=r.ag1+r.ag2; r.net=r.rg-r.rl;
+    return r;
+  }).filter(r=> r.of||r.ag||memberDir[r.id]);
+  return out;
+}
+function namesFromAttacks(id){
+  for(let i=attacks.length-1;i>=0;i--){ const a=attacks[i];
+    if(a.aId==id) return a.aName; if(a.dId==id) return a.dName; }
+  return null;
+}
+
+/* ---------- terms suggestion ---------- */
+$("termsSuggest").onclick = ()=>{
+  const inc = attacks.filter(a=>isWarAtk(a)&&a.dFac==war.facId).map(a=>a.t);
+  const out = attacks.filter(a=>isWarAtk(a)&&a.aFac==war.facId).map(a=>a.t);
+  const t0=war.start, t1=clampT(now()); const bin=1800;
+  const bins=Math.max(2,Math.ceil((t1-t0)/bin));
+  function best(series){
+    if(series.length<8) return null;
+    const cnt=new Array(bins).fill(0);
+    for(const t of series){ const i=Math.min(bins-1,Math.floor((t-t0)/bin)); if(i>=0)cnt[i]++ }
+    let bi=-1,bs=0;
+    for(let i=1;i<bins;i++){
+      const pre=cnt.slice(0,i).reduce((a,b)=>a+b,0)/i;
+      const postN=cnt.slice(i).reduce((a,b)=>a+b,0), post=postN/(bins-i);
+      if(postN>=5 && post>Math.max(1,pre*3) && post-pre>bs){ bs=post-pre; bi=i }
+    }
+    return bi<0? null : {ts:t0+bi*bin, score:bs};
+  }
+  const bIn=best(inc), bOut=best(out);
+  let pick=null, who="";
+  if(bIn && (!bOut || bIn.score>=bOut.score)){ pick=bIn; who="incoming hits on your side jump — looks like your faction opened up" }
+  else if(bOut){ pick=bOut; who="your outgoing hit rate jumps — looks like they opened up" }
+  if(!pick){ $("termsHint").textContent="No clear pattern break in either direction yet — you may not have termed, or set it manually."; return }
+  war.terms=pick.ts; save(LS.war,war); $("termsInput").value=tsToLocalInput(pick.ts);
+  $("termsHint").textContent="Suggested terms at "+fmtDT(pick.ts)+" TCT: "+who+". Adjust the time if it's off.";
+  renderAll();
+};
+$("termsNow").onclick=()=>{ war.terms=now(); save(LS.war,war); $("termsInput").value=tsToLocalInput(war.terms); renderAll() };
+$("termsClear").onclick=()=>{ war.terms=null; save(LS.war,war); $("termsInput").value=""; renderAll() };
+$("termsInput").onchange=()=>{ const v=$("termsInput").value; war.terms = v? Math.floor(new Date(v+"Z").getTime()/1000):null; save(LS.war,war); renderAll() };
+
+/* ---------- rendering ---------- */
+const COLS=[
+  ["name","Member",r=>r.name,"left"],
+  ["status","Now",null],
+  ["of","Hits",r=>r.of],
+  ["as","Asst",r=>r.as],
+  ["rg","Respect +",r=>r.rg],
+  ["ag","Hit by",r=>r.ag],
+  ["rl","Respect −",r=>r.rl],
+  ["net","Net",r=>r.net],
+  ["lastHit","Last hit",r=>r.lastHit],
+];
+function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderEnemy(); renderRetal(); renderQuality(); }
+
+function renderQuality(){
+  const per={};
+  for(const a of attacks){
+    if(a.t>scrubT) break;
+    if(!(isWarAtk(a) && a.aFac==war.facId && a.aId && WIN.has(a.res))) continue;
+    const r = per[a.aId] || (per[a.aId]={name:a.aName, n:0, rg:0, ffSum:0, ffN:0, lvSum:0, lvN:0, low:0});
+    r.n++; r.rg+=a.rg;
+    if(a.ff!=null){ r.ffSum+=a.ff; r.ffN++; if(a.ff<=1.25) r.low++ }
+    if(a.dl!=null){ r.lvSum+=a.dl; r.lvN++ }
+  }
+  const rows=Object.values(per).filter(r=>r.n>=1);
+  if(!rows.length){ $("qtblBody").innerHTML=`<tr><td colspan="6" class="meta">No war hits logged yet.</td></tr>`; return }
+  rows.forEach(r=>{ r.avgR=r.rg/r.n; r.avgFF=r.ffN? r.ffSum/r.ffN : null; r.avgLv=r.lvN? r.lvSum/r.lvN : null; r.lowPct=r.ffN? r.low/r.ffN : 0 });
+  rows.sort((a,b)=> (a.avgFF??9)-(b.avgFF??9) || a.avgR-b.avgR);
+  let html="";
+  for(const r of rows){
+    const ffTxt = r.avgFF==null? "–" : r.avgFF.toFixed(2);
+    const ffCls = r.avgFF==null? "zero" : r.avgFF<=1.3? "neg" : r.avgFF>=2? "pos" : "";
+    const lowTxt = r.ffN? `${r.low} <span class="sub">(${Math.round(100*r.lowPct)}%)</span>` : "–";
+    html+=`<tr><td style="text-align:left" class="name">${esc(r.name)}</td>
+      <td>${r.n}</td>
+      <td>${r.avgR.toFixed(1)}</td>
+      <td class="${ffCls}">${ffTxt}</td>
+      <td>${r.avgLv==null?"–":Math.round(r.avgLv)}</td>
+      <td class="${r.lowPct>0.5&&r.ffN>=5?'neg':''}">${lowTxt}</td></tr>`;
+  }
+  $("qtblBody").innerHTML=html;
+}
+
+function renderEnemy(){
+  const ids=Object.keys(enemyDir);
+  if(!ids.length){ $("etblBody").innerHTML=`<tr><td colspan="5" class="meta">Enemy roster loads on the next status poll.</td></tr>`; return }
+  const t=now();
+  const hitsOn={}, farmers={};
+  for(const a of attacks){ if(a.aFac==war.facId && a.dId && WIN.has(a.res)){
+    hitsOn[a.dId]=(hitsOn[a.dId]||0)+1;
+  }}
+  for(const ev of medEvents){
+    for(const a of attacks){
+      if(a.t<ev.t) continue; if(a.t>ev.t+600) break;
+      if(a.dId==ev.id && a.aFac==war.facId && a.aId && WIN.has(a.res)){
+        const f=(farmers[ev.id]=farmers[ev.id]||{}); f[a.aName]=(f[a.aName]||0)+1;
+      }
+    }
+  }
+  const medCount={}; for(const ev of medEvents) medCount[ev.id]=(medCount[ev.id]||0)+1;
+  const rank=s=> s.state==="Okay"?0 : s.state==="Hospital"?1 : (s.state==="Traveling"||s.state==="Abroad")?2:3;
+  const rows=ids.map(id=>({id, name:enemyDir[id].name, s:enemyStatus[id]||{state:"?",until:0}}))
+    .sort((a,b)=> rank(a.s)-rank(b.s) || (a.s.until||9e12)-(b.s.until||9e12));
+  let html="";
+  for(const r of rows){
+    let nowCell;
+    if(r.s.state==="Okay") nowCell=`<span class="st ok">okay</span>`;
+    else if(r.s.state==="Hospital"){ const left=Math.max(0,(r.s.until||0)-t);
+      nowCell=`<span class="st hosp">hosp${left? " · out in "+fmtLeft(left):""}</span>` }
+    else if(r.s.state==="Traveling"||r.s.state==="Abroad") nowCell=`<span class="st travel">${r.s.state.toLowerCase()}</span>`;
+    else nowCell=`<span class="st other">${esc(String(r.s.state).toLowerCase())}</span>`;
+    const f=farmers[r.id];
+    const fTxt = f? Object.entries(f).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([n,c])=>`${esc(n)} (${c})`).join(", ") : "";
+    html+=`<tr><td style="text-align:left" class="name">${esc(r.name)}</td>
+      <td>${nowCell}</td>
+      <td class="${medCount[r.id]?'':'zero'}">${medCount[r.id]||0}</td>
+      <td class="${hitsOn[r.id]?'':'zero'}">${hitsOn[r.id]||0}</td>
+      <td style="text-align:left" class="meta">${fTxt}</td></tr>`;
+  }
+  $("etblBody").innerHTML=html;
+}
+function fmtLeft(s){ if(s<60) return s+"s"; if(s<3600) return Math.ceil(s/60)+"m"; return Math.floor(s/3600)+"h"+Math.ceil((s%3600)/60)+"m" }
+
+function renderRetal(){
+  const T=scrubT, t=now();
+  const outs = attacks.filter(a=>a.t<=T && a.aFac==war.facId && a.aId && WIN.has(a.res));
+  let opps=0, claimed=0; const claimers={}; const missed=[];
+  for(const a of attacks){
+    if(a.t>T) break;
+    if(!(isWarAtk(a) && a.dFac==war.facId && a.aId && WIN.has(a.res))) continue;
+    opps++;
+    const hit = outs.find(o=> o.dId==a.aId && o.t>a.t && o.t<=a.t+300);
+    if(hit){ claimed++; claimers[hit.aName]=(claimers[hit.aName]||0)+1 }
+    else if(a.t+300 < t) missed.push(a);
+  }
+  if(!opps){ $("retalSummary").innerHTML=`<span class="meta">No retal opportunities logged yet.</span>`; $("retalMissed").textContent=""; return }
+  const pct=Math.round(100*claimed/opps);
+  const top=Object.entries(claimers).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n,c])=>`${esc(n)} (${c})`).join(", ");
+  $("retalSummary").innerHTML=`<span><b class="${pct>=60?'pos':'neg'}">${claimed}/${opps}</b> retal windows claimed (${pct}%)</span>`+
+    (top?`<span class="meta">· top claimers: ${top}</span>`:"");
+  const recent=missed.slice(-5).reverse().map(a=>`${esc(a.aName)} hit ${esc(a.dName)} at ${fmtDT(a.t)}`).join(" · ");
+  $("retalMissed").textContent = recent? "Recently missed: "+recent : "";
+}
+function renderHeader(){
+  const v=$("vsline"); v.hidden=false;
+  let s="";
+  s+=`<span class="us">${esc(war.facName)}</span>`;
+  if(warScores) s+=` <span class="score us">${fmtNum(warScores.us)}</span>`;
+  s+=` <span class="meta">vs</span> `;
+  s+=`<span class="them">${esc(war.oppName)}</span>`;
+  if(warScores) s+=` <span class="score them">${fmtNum(warScores.them)}</span>`;
+  if(warScores&&warScores.target) s+=` <span class="meta">· lead target ${fmtNum(warScores.target)}</span>`;
+  if(chainInfo && chainInfo.current>0){
+    const left = chainInfo.endTs? chainInfo.endTs-now() : 0;
+    s+=` <span class="meta">·</span> <span style="color:var(--amber)">chain ${fmtNum(chainInfo.current)}${left>0? " · "+fmtLeft(left)+" left":""}</span>`;
+  }
+  v.innerHTML=s; updDot();
+}
+function clampT(t){ const hi = war.end&&war.end<now()? war.end : now(); return Math.min(Math.max(t,war.start),hi) }
+function renderScrubOnly(){
+  const t0=war.start, t1=war.end&&war.end<now()?war.end:now();
+  const sc=$("scrub");
+  sc.value = Math.round(1000*(scrubT-t0)/Math.max(1,(t1-t0)));
+  $("scrubTimeLbl").textContent = liveMode? "now ("+fmtDT(scrubT)+" TCT)" : fmtDT(scrubT)+" TCT";
+  $("liveBtn").className = liveMode? "primary":"";
+  $("axL").textContent=fmtDT(t0); $("axM").textContent=fmtDT(t0+(t1-t0)/2); $("axR").textContent= war.end&&war.end<=now()? fmtDT(t1):"now";
+  drawSpark(t0,t1);
+}
+function drawSpark(t0,t1){
+  const svg=$("spark"); const W=1000,H=96,mid=H*0.55; svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const bin=Math.max(900,Math.ceil((t1-t0)/120)); const n=Math.max(1,Math.ceil((t1-t0)/bin));
+  const up=new Array(n).fill(0), dn=new Array(n).fill(0);
+  for(const a of attacks){ if(!isWarAtk(a)) continue; const i=Math.min(n-1,Math.floor((a.t-t0)/bin)); if(i<0)continue;
+    if(a.aFac==war.facId) up[i]+=a.rg; if(a.dFac==war.facId) dn[i]+=a.rl; }
+  const mx=Math.max(1,...up,...dn); let p="";
+  const bw=W/n;
+  for(let i=0;i<n;i++){
+    const hu=(up[i]/mx)*(mid-6), hd=(dn[i]/mx)*(H-mid-6);
+    if(hu>0.5)p+=`<rect x="${(i*bw).toFixed(1)}" y="${(mid-hu).toFixed(1)}" width="${Math.max(1,bw-0.6).toFixed(1)}" height="${hu.toFixed(1)}" fill="var(--up)" opacity=".8"/>`;
+    if(hd>0.5)p+=`<rect x="${(i*bw).toFixed(1)}" y="${mid.toFixed(1)}" width="${Math.max(1,bw-0.6).toFixed(1)}" height="${hd.toFixed(1)}" fill="var(--down)" opacity=".8"/>`;
+  }
+  p+=`<line x1="0" x2="${W}" y1="${mid}" y2="${mid}" stroke="var(--line)" stroke-width="1"/>`;
+  if(war.terms&&war.terms>=t0&&war.terms<=t1){ const x=W*(war.terms-t0)/(t1-t0);
+    p+=`<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="0" y2="${H}" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="4 3"/>`; }
+  svg.innerHTML=p;
+}
+$("scrub").addEventListener("input",e=>{
+  const t0=war.start,t1=war.end&&war.end<now()?war.end:now();
+  scrubT=t0+(t1-t0)*(+e.target.value/1000); liveMode=false;
+  renderScrubOnly(); renderTable(); renderTimelines();
+});
+$("liveBtn").onclick=()=>{ liveMode=true; scrubT=clampT(now()); renderAll() };
+
+function renderTable(){
+  const rows=aggregate(scrubT);
+  const key=sortKey, dir=sortDir;
+  rows.sort((a,b)=>{ const va=a[key]??0, vb=b[key]??0;
+    return (typeof va==="string"? va.localeCompare(vb) : va-vb)*dir });
+  const split=!!war.terms;
+  $("tblScope").textContent = liveMode? "· live" : "· up to "+fmtDT(scrubT)+" TCT";
+  let hh="";
+  for(const [k,label] of COLS){
+    const s=k===sortKey?` class="sorted"`:"";
+    const sub = split && ["of","rg","ag","rl"].includes(k) ? `<div class="sub">pre · post</div>`:"";
+    hh+=`<th data-k="${k}"${s}>${label}${sub}</th>`;
+  }
+  $("tblHead").innerHTML=hh;
+  for(const th of $("tblHead").children) th.onclick=()=>{ const k=th.dataset.k;
+    if(sortKey===k) sortDir*=-1; else { sortKey=k; sortDir = k==="name"?1:-1 } renderTable() };
+  let body=""; const tot={of1:0,of2:0,ag1:0,ag2:0,rg:0,rl:0,as:0};
+  for(const r of rows){
+    tot.of1+=r.of1;tot.of2+=r.of2;tot.ag1+=r.ag1;tot.ag2+=r.ag2;tot.rg+=r.rg;tot.rl+=r.rl;tot.as+=r.as;
+    body+=`<tr>
+      <td class="name">${esc(r.name)}</td>
+      <td>${statusCell(r.id)}</td>
+      <td class="prepost">${pp(r.of1,r.of2,split)}</td>
+      <td class="${r.as?'':'zero'}">${r.as}</td>
+      <td class="pos">${r.rg?fmtR(r.rg):'<span class="zero">0</span>'}</td>
+      <td class="prepost">${pp(r.ag1,r.ag2,split,true)}</td>
+      <td class="${r.rl?'neg':'zero'}">${fmtR(r.rl)}</td>
+      <td class="${r.net>0?'pos':r.net<0?'neg':'zero'}"><b>${fmtR(r.net)}</b></td>
+      <td class="meta">${r.lastHit?ago(r.lastHit):"–"}</td></tr>`;
+  }
+  $("tblBody").innerHTML=body || `<tr><td colspan="9" class="meta">No war hits logged yet — they'll appear as the attack log syncs.</td></tr>`;
+  $("tblFoot").innerHTML=`<td>Total</td><td></td><td>${pp(tot.of1,tot.of2,split)}</td><td>${tot.as}</td><td class="pos">${fmtR(tot.rg)}</td><td>${pp(tot.ag1,tot.ag2,split,true)}</td><td class="neg">${fmtR(tot.rl)}</td><td class="${tot.rg-tot.rl>=0?'pos':'neg'}"><b>${fmtR(tot.rg-tot.rl)}</b></td><td></td>`;
+  $("attackMeta").textContent = attacks.filter(isWarAtk).length+" war hits logged · attack log syncs every "+cfg.pAtk+"s";
+}
+function pp(a,b,split,bad){ if(!split) return String(a+b||0);
+  return `<span class="pre">${a}</span> · <b class="${bad&&b? 'neg':''}">${b}</b>` }
+function statusCell(id){
+  const s=lastStatus[id]; if(!s) return `<span class="st other">–</span>`;
+  if(s.state==="Hospital") return s.cause==="enemy"? `<span class="st hosp">hosp (enemy)</span>` : `<span class="st shosp">hosp (self?)</span>`;
+  if(s.state==="Traveling"||s.state==="Abroad") return `<span class="st travel">${s.state.toLowerCase()}</span>`;
+  if(s.state==="Okay") return `<span class="st ok">okay</span>`;
+  return `<span class="st other">${esc(s.state.toLowerCase())}</span>`;
+}
+
+/* timelines */
+function renderTimelines(){
+  const el=$("tlRows");
+  if(!snaps.length){ el.innerHTML=`<p class="meta">No status samples yet — the board fills in while the page stays open.</p>`; return }
+  const t0=Math.max(war.start, snaps[0].t), t1=scrubT;
+  if(t1<=t0){ el.innerHTML=`<p class="meta">Move the slider past ${fmtDT(t0)} to see recorded statuses.</p>`; return }
+  // build per-member interval lists
+  const per={};
+  for(const s of snaps){ if(s.t>t1) break;
+    for(const [id,v] of Object.entries(s.ch)){
+      (per[id]=per[id]||[]).push({t:Math.max(s.t,t0), state:v[0], cause:v[2]}) } }
+  const ids=Object.keys(per).sort((a,b)=> (memberDir[a]?.name||"").localeCompare(memberDir[b]?.name||""));
+  let html="";
+  for(const id of ids){
+    const segs=per[id]; let bars="";
+    for(let i=0;i<segs.length;i++){
+      const s=segs[i], e=(i+1<segs.length? segs[i+1].t : t1);
+      const x=100*(s.t-t0)/(t1-t0), w=100*(e-s.t)/(t1-t0);
+      let col="var(--tl-other)";
+      if(s.state==="Okay")col="var(--tl-ok)";
+      else if(s.state==="Hospital")col= s.cause==="enemy"?"var(--tl-ehosp)":"var(--tl-shosp)";
+      else if(s.state==="Traveling"||s.state==="Abroad")col="var(--tl-travel)";
+      bars+=`<div class="tl-seg" style="left:${x.toFixed(2)}%;width:${Math.max(0.15,w).toFixed(2)}%;background:${col}"></div>`;
+    }
+    if(war.terms&&war.terms>=t0&&war.terms<=t1)
+      bars+=`<div class="tl-mark" style="left:${(100*(war.terms-t0)/(t1-t0)).toFixed(2)}%"></div>`;
+    html+=`<div class="tl-row"><div class="tl-name">${esc(memberDir[id]?.name||id)}</div><div class="tl-band">${bars}</div></div>`;
+  }
+  el.innerHTML=html;
+  $("tlHint").textContent=`Recording since ${fmtDT(snaps[0].t)} TCT. Status is sampled every ${cfg.pMem}s while this page is open; the hit table backfills regardless.`;
+}
+
+/* ---------- csv ---------- */
+$("csvBtn").onclick=()=>{
+  const rows=aggregate(scrubT);
+  const split=!!war.terms;
+  const head=["member","hits_pre","hits_post","hits_total","assists","respect_gained","avg_respect_per_hit","avg_fair_fight","hit_by_pre","hit_by_post","hit_by_total","respect_lost","net"];
+  let csv=head.join(",")+"\n";
+  const ffPer={};
+  for(const a of attacks){ if(a.t<=scrubT && isWarAtk(a) && a.aFac==war.facId && a.aId && WIN.has(a.res) && a.ff!=null){
+    const f=ffPer[a.aId]||(ffPer[a.aId]={s:0,n:0}); f.s+=a.ff; f.n++ } }
+  for(const r of rows.sort((a,b)=>b.net-a.net)){
+    const f=ffPer[r.id];
+    csv+=[q(r.name),r.of1,r.of2,r.of,r.as,r.rg.toFixed(2),(r.of? (r.rg/r.of).toFixed(2):""),(f? (f.s/f.n).toFixed(2):""),r.ag1,r.ag2,r.ag,r.rl.toFixed(2),r.net.toFixed(2)].join(",")+"\n";
+  }
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download=`war-ledger-${war.oppName.replace(/\W+/g,"_")}.csv`; a.click();
+  function q(s){ return '"'+String(s).replace(/"/g,'""')+'"' }
+};
+
+/* ---------- settings ---------- */
+$("pAtk").onchange=()=>{ cfg.pAtk=Math.max(30,+$("pAtk").value||120); save(LS.cfg,cfg); schedule() };
+$("pMem").onchange=()=>{ cfg.pMem=Math.max(30,+$("pMem").value||60); save(LS.cfg,cfg); schedule() };
+$("pauseBtn").onclick=()=>{ paused=!paused; $("pauseBtn").textContent=paused?"Resume polling":"Pause polling"; updDot() };
+$("forgetWar").onclick=()=>{ if(!war)return; if(!confirm("Clear stored hits and statuses for this war?"))return;
+  localStorage.removeItem(LS.atk(war.warId)); localStorage.removeItem(LS.snap(war.warId));
+  localStorage.removeItem(LS.esnap(war.warId)); localStorage.removeItem(LS.med(war.warId));
+  localStorage.removeItem(LS.war); location.reload() };
+$("forgetAll").onclick=()=>{ if(!confirm("Forget everything, including the API key?"))return;
+  for(const k of Object.keys(localStorage)) if(k.startsWith("twl_")) localStorage.removeItem(k);
+  location.reload() };
+
+/* ---------- utils ---------- */
+function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])) }
+function fmtNum(n){ return (+n||0).toLocaleString("en-GB") }
+function fmtR(n){ const v=+n||0; return (Math.abs(v)>=1000? v.toLocaleString("en-GB",{maximumFractionDigits:0}) : v.toFixed(Math.abs(v)<10&&v!==0?1:0)) }
+function fmtDT(t){ const d=new Date(t*1000); return d.toISOString().slice(5,16).replace("T"," ") }
+function fmtDate(t){ const d=new Date(t*1000); return d.toISOString().slice(0,10) }
+function fmtClock(t){ return new Date(t*1000).toISOString().slice(11,19)+" TCT" }
+function ago(t){ const s=now()-t; if(s<90)return s+"s ago"; if(s<5400)return Math.round(s/60)+"m ago"; if(s<172800)return Math.round(s/3600)+"h ago"; return Math.round(s/86400)+"d ago" }
+function tsToLocalInput(t){ return new Date(t*1000).toISOString().slice(0,16) }
+
+/* ---------- boot ---------- */
+(function boot(){
+  if(cfg.key){
+    $("apikey").value=cfg.key;
+    if(war){
+      attacks=load(LS.atk(war.warId))||[]; attackIds=new Set(attacks.map(a=>a.id));
+      snaps=load(LS.snap(war.warId))||[]; rebuildStatusFromSnaps();
+      $("setup").hidden=true; startTracking();
+      loadWarList().then(()=>{}); // warm the picker in case they switch
+      return;
+    }
+    // key saved but no war picked yet
+    $("setup").hidden=true;
+    loadWarList().then(()=>{ $("warpick").hidden=false }).catch(e=>{ $("setup").hidden=false; showErr(e.message) });
+  }
+})();
+function showErr(m){ const b=$("banner"); b.textContent=m; b.classList.add("show") }
+function clearErr(){ $("banner").classList.remove("show") }
+</script>
+</body>
+</html>
