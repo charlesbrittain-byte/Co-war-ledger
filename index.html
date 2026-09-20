@@ -203,6 +203,32 @@ details.settings summary{cursor:pointer}
   <p class="hint">Use a <b>Limited</b> key (torn.com → Settings → API keys), from a member who has the <b>API access</b> faction permission — that's what unlocks the faction attack log. The key is stored only in this browser and sent only to api.torn.com.</p>
 </section>
 
+<!-- HOME DASHBOARD -->
+<section id="homeCard" class="card" hidden>
+  <div class="scrubhead">
+    <h2 style="margin:0">Faction form — how everyone's been doing</h2>
+    <div class="meta" id="homeMeta"></div>
+  </div>
+  <div class="zoomrow">
+    <span class="lbl">Across the last</span>
+    <select id="homeN" style="padding:4px 8px">
+      <option value="3">3 wars</option>
+      <option value="5" selected>5 wars</option>
+      <option value="10">10 wars</option>
+    </select>
+    <button id="homeLoad" class="primary">Load</button>
+    <span class="meta" id="homeProg"></span>
+  </div>
+  <div class="tblwrap" style="margin-top:10px">
+    <table id="hmtbl" style="min-width:820px">
+      <thead><tr id="hmHead"></tr></thead>
+      <tbody id="hmtblBody"></tbody>
+      <tfoot><tr id="hmtblFoot"></tr></tfoot>
+    </table>
+  </div>
+  <p class="hint" id="homeHint">The same figures you get by clicking a member during a war, totalled across recent wars. Each war's attack log is fetched once and cached on this device, so the first load takes a moment. Members only count for wars they were in the faction for.</p>
+</section>
+
 <!-- WAR PICK -->
 <section id="warpick" class="card" hidden>
   <h2>War window</h2>
@@ -488,7 +514,7 @@ $("connectBtn").onclick = async ()=>{
     save(LS.cfg, cfg);
     clearErr();
     await loadWarList();
-    $("setup").hidden = true; $("warpick").hidden = false;
+    $("setup").hidden = true; $("warpick").hidden = false; $("homeCard").hidden = false; renderHome();
   }catch(e){ showErr(e.message) }
   $("connectBtn").disabled = false; $("connectBtn").textContent="Connect";
 };
@@ -669,7 +695,7 @@ async function pollScore(){
 
 /* ---------- polling loops ---------- */
 function startTracking(){
-  $("warpick").hidden = true;
+  $("warpick").hidden = true; $("homeCard").hidden = true;
   for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=false;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
@@ -1316,6 +1342,105 @@ function renderArmoury(){
 }
 
 
+
+/* ---------- home dashboard ----------
+   Roster-wide version of the per-member modal: same statsFor() over the same
+   cached war logs, so a member's row here and their detail popup agree. One
+   pass per war across all members rather than per member, which is why this
+   can cover the whole faction without a fetch each. */
+let homeRows=null, homeSort={k:"net",dir:-1};
+const HOME_COLS=[
+  {k:"name", label:"Member", left:true},
+  {k:"lvl",  label:"Level"},
+  {k:"wars", label:"Wars"},
+  {k:"of",   label:"Hits"},
+  {k:"as",   label:"Asst"},
+  {k:"rg",   label:"Respect +", cls:"pos", fmt:v=>fmtR(v)},
+  {k:"ag",   label:"Hit by"},
+  {k:"rl",   label:"Respect −", cls:"neg", fmt:v=>fmtR(v)},
+  {k:"net",  label:"Net", fmt:v=>fmtR(v)},
+  {k:"ff",   label:"Avg FF", fmt:v=>v? v.toFixed(2):"–"}
+];
+async function loadHome(){
+  const btn=$("homeLoad"); btn.disabled=true;
+  try{
+    $("homeProg").textContent="reading roster…";
+    const r=await api("/faction/members");
+    const t=now();
+    for(const m of (r.members||[])){
+      const dif=(m.days_in_faction ?? null);
+      memberDir[m.id]={name:m.name, pos:m.position||"", lvl:m.level||0,
+                       joined: dif==null? null : t-dif*86400};
+    }
+    const n=+$("homeN").value||5;
+    const wars=(await ensureWarHistory()).filter(w=>w.start<=now()).slice(0,n);
+    const per={};
+    for(const id of Object.keys(memberDir))
+      per[id]={id:+id, name:memberDir[id].name, lvl:memberDir[id].lvl||0,
+               wars:0, of:0, as:0, rg:0, ag:0, rl:0, net:0, ffS:0, ffN:0, ff:0};
+    let done=0, failed=0;
+    for(const w of wars){
+      $("homeProg").textContent=`war ${++done} of ${wars.length}…`;
+      let arr;
+      try{ arr=await loadWarAttacksCached(w) }catch(e){ failed++; continue }
+      for(const id of Object.keys(per)){
+        const joined=memberDir[id]?.joined ?? null;
+        if(joined!=null && (w.end||now()) < joined) continue;   // not here for it
+        const st=statsFor(+id, arr, w);
+        const p=per[id];
+        if(st.of||st.as||st.ag||st.rg||st.rl) p.wars++;
+        p.of+=st.of; p.as+=st.as; p.rg+=st.rg; p.ag+=st.ag; p.rl+=st.rl;
+        p.ffS+=st.ffS; p.ffN+=st.ffN;
+      }
+    }
+    for(const p of Object.values(per)){ p.net=p.rg-p.rl; p.ff=p.ffN? p.ffS/p.ffN : 0 }
+    homeRows={rows:Object.values(per), wars:wars.length, at:now(), failed};
+    $("homeProg").textContent = failed? `${failed} war log${failed>1?"s":""} couldn't be read` : "";
+    renderHome();
+  }catch(e){ $("homeProg").textContent=e.message }
+  finally{ btn.disabled=false }
+}
+function renderHome(){
+  $("hmHead").innerHTML=HOME_COLS.map(c=>
+    `<th data-k="${c.k}" class="${homeSort.k===c.k?"sorted":""}" style="${c.left?"text-align:left":""}">${c.label}</th>`).join("");
+  if(!homeRows){
+    $("hmtblBody").innerHTML=`<tr><td colspan="${HOME_COLS.length}" class="meta">Press Load to pull recent war logs.</td></tr>`;
+    $("hmtblFoot").innerHTML=""; $("homeMeta").textContent=""; return;
+  }
+  const rows=[...homeRows.rows].sort((a,b)=>{
+    const va=a[homeSort.k]??0, vb=b[homeSort.k]??0;
+    return (typeof va==="string"? va.localeCompare(vb) : va-vb)*homeSort.dir;
+  });
+  $("homeMeta").textContent=`last ${homeRows.wars} war${homeRows.wars===1?"":"s"} · loaded ${ago(homeRows.at)}`;
+  $("hmtblBody").innerHTML=rows.map(r=>"<tr>"+HOME_COLS.map(c=>{
+    if(c.k==="name") return `<td style="text-align:left" class="name" data-mid="${r.id}">${esc(r.name)}</td>`;
+    const v=r[c.k], txt=c.fmt? c.fmt(v) : (v||(v===0?"0":"–"));
+    let cls=c.cls||"";
+    if(c.k==="net") cls=v>0?"pos":v<0?"neg":"zero";
+    if(!v && c.k!=="net") cls="zero";
+    return `<td class="${cls}">${txt}</td>`;
+  }).join("")+"</tr>").join("");
+  const S=k=>rows.reduce((x,r)=>x+(r[k]||0),0);
+  const tn=S("rg")-S("rl"), ffN=S("ffN");
+  $("hmtblFoot").innerHTML=`<td style="text-align:left">Total</td><td class="lvl">––</td><td></td>`
+    + `<td>${S("of")}</td><td>${S("as")}</td><td class="pos">${fmtR(S("rg"))}</td>`
+    + `<td>${S("ag")}</td><td class="neg">${fmtR(S("rl"))}</td>`
+    + `<td class="${tn>=0?"pos":"neg"}"><b>${fmtR(tn)}</b></td>`
+    + `<td>${ffN? (S("ffS")/ffN).toFixed(2):"–"}</td>`;
+}
+$("homeLoad").onclick=loadHome;
+$("homeN").onchange=()=>{ if(homeRows) loadHome() };
+$("hmHead").addEventListener("click",e=>{
+  const th=e.target.closest("th[data-k]"); if(!th) return;
+  const k=th.dataset.k;
+  homeSort = homeSort.k===k? {k, dir:-homeSort.dir} : {k, dir: k==="name"? 1 : -1};
+  renderHome();
+});
+$("hmtblBody").addEventListener("click",e=>{
+  const td=e.target.closest("td.name");
+  if(td&&td.dataset.mid) openMemberDetail(+td.dataset.mid);
+});
+
 /* ---------- csv ---------- */
 $("csvBtn").onclick=()=>{
   const rows=aggregate(scrubT);
@@ -1345,7 +1470,7 @@ $("switchWar").onclick = async ()=>{
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
   $("pollmeta").textContent="pick a war"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
-  $("warpick").hidden=false;
+  $("warpick").hidden=false; $("homeCard").hidden=false; renderHome();
   window.scrollTo({top:0});
 };
 
@@ -1539,7 +1664,7 @@ function tsToLocalInput(t){ return new Date(t*1000).toISOString().slice(0,16) }
     }
     // key saved but no war picked yet
     $("setup").hidden=true;
-    loadWarList().then(()=>{ $("warpick").hidden=false }).catch(e=>{ $("setup").hidden=false; showErr(e.message) });
+    loadWarList().then(()=>{ $("warpick").hidden=false; $("homeCard").hidden=false; renderHome() }).catch(e=>{ $("setup").hidden=false; showErr(e.message) });
   }
 })();
 function showErr(m){ const b=$("banner"); b.textContent=m; b.classList.add("show") }
