@@ -155,6 +155,13 @@ td.name:hover{color:var(--amber)}
 .tl-tick.am.pts{background:var(--it-pts)}
 .tl-tick.am.refill{background:var(--it-refill)}
 .tl-tall .tl-tick.am{width:4px}
+/* home armoury timeline: weekend shading and day separators */
+.tl-weekend{position:absolute; top:0; bottom:0; background:#313944; z-index:0}
+.tl-day{position:absolute; top:0; bottom:0; width:1px; background:rgba(10,12,14,.5); z-index:1}
+.tl-axis{display:flex; gap:10px; align-items:center; margin:2px 0 4px}
+.tl-axis .tl-name{visibility:hidden}
+.tl-axis .ax{flex:1; position:relative; height:14px; color:var(--faint); font-size:11.5px}
+.tl-axis .ax span{position:absolute; transform:translateX(-50%); white-space:nowrap}
 /* taller rows: same data, more room to read it */
 .tl-tall .tl-band{height:28px}
 .tl-tall .tl-row{margin-bottom:5px}
@@ -227,6 +234,43 @@ details.settings summary{cursor:pointer}
     </table>
   </div>
   <p class="hint" id="homeHint">The same figures you get by clicking a member during a war, totalled across recent wars. Each war's attack log is fetched once and cached on this device, so the first load takes a moment. Members only count for wars they were in the faction for.</p>
+</section>
+
+<!-- HOME ARMOURY -->
+<section id="homeArmCard" class="card" hidden>
+  <div class="scrubhead">
+    <h2 style="margin:0">Armoury use — who's taking what, and when</h2>
+    <div class="meta" id="homeArmMeta"></div>
+  </div>
+  <div class="zoomrow">
+    <span class="lbl">Last</span>
+    <select id="homeArmDays" style="padding:4px 8px">
+      <option value="7">7 days</option>
+      <option value="14" selected>14 days</option>
+      <option value="30">30 days</option>
+    </select>
+    <button id="homeArmLoad" class="primary">Load</button>
+    <span class="meta" id="homeArmProg"></span>
+  </div>
+  <div id="homeArmRows" style="margin-top:10px"></div>
+  <div class="legend">
+    <span><i style="background:var(--it-xan);height:10px;width:3px"></i>xanax</span>
+    <span><i style="background:var(--it-sfak);height:10px;width:3px"></i>small first aid kit</span>
+    <span><i style="background:var(--it-fak);height:10px;width:3px"></i>first aid kit</span>
+    <span><i style="background:var(--it-morph);height:10px;width:3px"></i>morphine</span>
+    <span><i style="background:var(--it-blood);height:10px;width:3px"></i>blood bag</span>
+    <span><i style="background:var(--it-other);height:10px;width:3px"></i>other item</span>
+    <span><i style="background:var(--it-pts);height:10px;width:3px"></i>faction points given</span>
+    <span><i style="background:#313944;border:1px solid var(--line)"></i>weekend</span>
+  </div>
+  <div class="tblwrap" style="margin-top:10px">
+    <table id="hatbl" style="min-width:780px">
+      <thead><tr><th style="text-align:left">Member</th><th>Xanax</th><th>Small FAK</th><th>First aid</th><th>Morphine</th><th>Blood bags</th><th>Other</th><th>Faction points</th></tr></thead>
+      <tbody id="hatblBody"></tbody>
+      <tfoot><tr id="hatblFoot"></tr></tfoot>
+    </table>
+  </div>
+  <p class="hint">Faction armoury only — items someone bought themselves never appear. Weekends are shaded, so a training weekend shows up as a burst of xanax against the grey. Each tick is the exact minute an item was taken; hover one to see what it was.</p>
 </section>
 
 <!-- WAR PICK -->
@@ -514,7 +558,7 @@ $("connectBtn").onclick = async ()=>{
     save(LS.cfg, cfg);
     clearErr();
     await loadWarList();
-    $("setup").hidden = true; $("warpick").hidden = false; $("homeCard").hidden = false; renderHome();
+    $("setup").hidden = true; $("warpick").hidden = false; $("homeCard").hidden = false; $("homeArmCard").hidden = false; renderHome(); renderHomeArm();
   }catch(e){ showErr(e.message) }
   $("connectBtn").disabled = false; $("connectBtn").textContent="Connect";
 };
@@ -695,7 +739,7 @@ async function pollScore(){
 
 /* ---------- polling loops ---------- */
 function startTracking(){
-  $("warpick").hidden = true; $("homeCard").hidden = true;
+  $("warpick").hidden = true; $("homeCard").hidden = true; $("homeArmCard").hidden = true;
   for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=false;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
@@ -1441,6 +1485,107 @@ $("hmtblBody").addEventListener("click",e=>{
   if(td&&td.dataset.mid) openMemberDetail(+td.dataset.mid);
 });
 
+
+/* ---------- home armoury (war-independent) ----------
+   Same faction news feeds as the in-war board, but over a plain date range so
+   it covers training weekends, which don't sit inside a war window. Weekends
+   are shaded so a training burst is obvious at a glance. */
+let homeArm=null;
+async function fetchNewsRange(cat, from, to, maxPages){
+  const out=[]; let cursor=to, pages=0;
+  while(pages++ < maxPages){
+    const r=await api("/faction/news", {cat, from, to:cursor, limit:100});
+    const list=r.news||[];
+    out.push(...list);
+    if(list.length<100) break;
+    const oldest=Math.min(...list.map(n=>n.timestamp));
+    if(!isFinite(oldest) || oldest<=from) break;
+    cursor=oldest-1;
+  }
+  return out;
+}
+async function loadHomeArm(){
+  const btn=$("homeArmLoad"); btn.disabled=true;
+  try{
+    const days=+$("homeArmDays").value||14;
+    const to=now(), from=to-days*86400;
+    $("homeArmProg").textContent="reading roster…";
+    const r=await api("/faction/members"); const t=now();
+    for(const m of (r.members||[])){
+      const dif=(m.days_in_faction ?? null);
+      memberDir[m.id]={name:m.name, pos:m.position||"", lvl:m.level||0, joined: dif==null? null : t-dif*86400};
+    }
+    $("homeArmProg").textContent="reading armoury news…";
+    const acts=await fetchNewsRange("armoryAction", from, to, 15);
+    $("homeArmProg").textContent="reading points…";
+    const gifts=await fetchNewsRange("giveFunds", from, to, 10);
+    const evs=[];
+    for(const n of acts){
+      const m=ARM_RE.exec(n.text||"");
+      if(m) evs.push({t:n.timestamp, id:+m[1], name:m[2], item:m[3].trim(), cls:armClass(m[3])});
+      else { const rf=/refill/i.test(n.text||"") && REFILL_RE.exec(n.text||"");
+             if(rf) evs.push({t:n.timestamp, id:+rf[1], name:rf[2], item:rf[3].replace(/<[^>]+>/g,"").trim(), cls:"refill"}) }
+    }
+    for(const n of gifts){
+      const m=PTS_RE.exec(n.text||"");
+      if(m) evs.push({t:n.timestamp, id:+m[1], name:m[2], item:m[3]+" faction points", cls:"pts", pts:+m[3].replace(/,/g,"")});
+    }
+    evs.sort((a,b)=>a.t-b.t);
+    homeArm={evs, from, to, at:now()};
+    $("homeArmProg").textContent = evs.length? "" : "nothing logged in this period";
+    renderHomeArm();
+  }catch(e){ $("homeArmProg").textContent=e.message }
+  finally{ btn.disabled=false }
+}
+function renderHomeArm(){
+  if(!homeArm){
+    $("homeArmRows").innerHTML=`<p class="meta">Press Load to pull the armoury log.</p>`;
+    $("hatblBody").innerHTML=""; $("hatblFoot").innerHTML=""; $("homeArmMeta").textContent=""; return;
+  }
+  const {evs, from, to}=homeArm, span=Math.max(60,to-from);
+  const X=t=>100*(t-from)/span;
+  const per={};
+  for(const e of evs){
+    const p=per[e.id]||(per[e.id]={id:e.id, name:e.name, evs:[], xan:0,sfak:0,fak:0,morph:0,blood:0,other:0,pts:0,refill:0});
+    p.evs.push(e);
+    if(e.cls==="pts") p.pts+=e.pts||0; else p[e.cls]=(p[e.cls]||0)+1;
+  }
+  // weekend bands and midnight separators, drawn behind the ticks
+  let bg="";
+  const startDay=Math.floor(from/86400)*86400;
+  for(let d=startDay; d<to; d+=86400){
+    const wd=new Date(d*1000).getUTCDay();          // 0 Sun, 6 Sat
+    const a=Math.max(d,from), b=Math.min(d+86400,to);
+    if(wd===0||wd===6) bg+=`<div class="tl-weekend" style="left:${X(a).toFixed(2)}%;width:${(X(b)-X(a)).toFixed(2)}%"></div>`;
+    if(d>from) bg+=`<div class="tl-day" style="left:${X(d).toFixed(2)}%"></div>`;
+  }
+  const ids=Object.keys(per).sort((a,b)=>per[b].xan-per[a].xan || per[b].evs.length-per[a].evs.length);
+  let axis=`<div class="tl-axis"><div class="tl-name">x</div><div class="ax">`;
+  for(let d=startDay; d<to; d+=86400){
+    const wd=new Date(d*1000).getUTCDay();
+    if(d>from && (span>20*86400? wd===1 : true))
+      axis+=`<span style="left:${X(d+43200).toFixed(2)}%">${["Su","Mo","Tu","We","Th","Fr","Sa"][wd]}</span>`;
+  }
+  axis+=`</div></div>`;
+  $("homeArmRows").innerHTML = ids.length
+    ? axis + ids.map(id=>{
+        const ticks=per[id].evs.map(e=>`<div class="tl-tick am ${e.cls}" style="left:${X(e.t).toFixed(2)}%" title="${esc(e.item)} · ${fmtDT(e.t)}"></div>`).join("");
+        return `<div class="tl-row"><div class="tl-name">${esc(per[id].name)}</div><div class="tl-band">${bg}${ticks}</div></div>`;
+      }).join("")
+    : `<p class="meta">Nothing taken from the armoury in this period.</p>`;
+  $("homeArmMeta").textContent=`${fmtDate(from)} → ${fmtDate(to)} · ${evs.length} event${evs.length===1?"":"s"} · loaded ${ago(homeArm.at)}`;
+  const rows=Object.values(per).sort((a,b)=>b.xan-a.xan);
+  const cell=(v,css)=>`<td class="${v?"":"zero"}" style="${v?`color:var(${css})`:""}">${v||"–"}</td>`;
+  $("hatblBody").innerHTML=rows.map(r=>`<tr><td style="text-align:left" class="name">${esc(r.name)}</td>`
+    + cell(r.xan,"--it-xan")+cell(r.sfak,"--it-sfak")+cell(r.fak,"--it-fak")+cell(r.morph,"--it-morph")
+    + cell(r.blood,"--it-blood")+cell(r.other,"--it-other")+cell(r.pts,"--it-pts")+`</tr>`).join("");
+  const S=k=>rows.reduce((x,r)=>x+(r[k]||0),0);
+  $("hatblFoot").innerHTML=`<td style="text-align:left">Total</td>`
+    + ["xan","sfak","fak","morph","blood","other","pts"].map(k=>`<td>${S(k)}</td>`).join("");
+}
+$("homeArmLoad").onclick=loadHomeArm;
+$("homeArmDays").onchange=()=>{ if(homeArm) loadHomeArm() };
+
 /* ---------- csv ---------- */
 $("csvBtn").onclick=()=>{
   const rows=aggregate(scrubT);
@@ -1470,7 +1615,7 @@ $("switchWar").onclick = async ()=>{
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
   $("pollmeta").textContent="pick a war"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
-  $("warpick").hidden=false; $("homeCard").hidden=false; renderHome();
+  $("warpick").hidden=false; $("homeCard").hidden=false; $("homeArmCard").hidden=false; renderHome(); renderHomeArm();
   window.scrollTo({top:0});
 };
 
