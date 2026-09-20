@@ -15,7 +15,7 @@
   --tick-out:#A6E06A; --tick-in:#FF7B82;
   /* armoury item colours, kept distinct against the dark bands */
   --it-xan:#F2F4F6; --it-sfak:#E04B52; --it-fak:#4C9BE0; --it-morph:#B06FE0;
-  --it-blood:#57B26A; --it-other:#7C858E;
+  --it-blood:#57B26A; --it-other:#7C858E; --it-pts:#3FC9B8;
   --tl-ok:#2E4633; --tl-ehosp:#7A3336; --tl-shosp:#8A6420; --tl-travel:#2F4A5C; --tl-other:#3A3F46;
 }
 *{box-sizing:border-box; margin:0; padding:0}
@@ -138,6 +138,7 @@ td.name:hover{color:var(--amber)}
 .tl-tick.am.morph{background:var(--it-morph)}
 .tl-tick.am.blood{background:var(--it-blood)}
 .tl-tick.am.other{background:var(--it-other)}
+.tl-tick.am.pts{background:var(--it-pts)}
 .tl-tall .tl-tick.am{width:4px}
 /* taller rows: same data, more room to read it */
 .tl-tall .tl-band{height:28px}
@@ -331,11 +332,12 @@ details.settings summary{cursor:pointer}
     <span><i style="background:var(--it-morph);height:10px;width:3px"></i>morphine</span>
     <span><i style="background:var(--it-blood);height:10px;width:3px"></i>blood bag</span>
     <span><i style="background:var(--it-other);height:10px;width:3px"></i>other item</span>
+    <span><i style="background:var(--it-pts);height:10px;width:3px"></i>faction points given</span>
     <span><i style="background:var(--amber)"></i>war starts</span>
   </div>
   <div class="tblwrap" style="margin-top:10px">
-    <table id="artbl" style="min-width:740px">
-      <thead><tr><th style="text-align:left">Member</th><th>Xanax before war</th><th>Xanax in war</th><th>Small FAK</th><th>First aid</th><th>Morphine</th><th>Blood bags</th><th>Other</th></tr></thead>
+    <table id="artbl" style="min-width:860px">
+      <thead><tr><th style="text-align:left">Member</th><th>Xanax before war</th><th>Xanax in war</th><th>Small FAK</th><th>First aid</th><th>Morphine</th><th>Blood bags</th><th>Other</th><th>Faction points given</th></tr></thead>
       <tbody id="artblBody"></tbody>
       <tfoot><tr id="artblFoot"></tr></tfoot>
     </table>
@@ -651,6 +653,7 @@ function startTracking(){
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
   armoury = load(LS.arm(war.warId))||[]; armIds = new Set();
+  ptsGiven = load(LS.pts(war.warId))||[]; ptsIds = new Set();
   $("settings").hidden=false;
   $("switchWar").hidden=false;
   $("pAtk").value=cfg.pAtk; $("pMem").value=cfg.pMem;
@@ -1131,6 +1134,11 @@ for(const id of ["medHits","medBurst","medGap"]) $(id).onchange=()=>{
    it only sees FACTION armoury items — xanax a member bought themselves never
    appears here, so treat these as a floor, not a total. */
 let armoury = [], armIds = new Set();
+let ptsGiven = [], ptsIds = new Set();
+// "Name was given 570 points by Someone" — a faction points gift. Torn does NOT
+// log a member spending points on a refill anywhere in the API, so this is the
+// allocation, not the use; see the note under the table.
+const PTS_RE = /XID=(\d+)[^>]*>([^<]*)<\/a>\s*was given ([\d,]+) points by/i;
 const ARM_RE = /XID=(\d+)[^>]*>([^<]*)<\/a>\s*used one of the faction's (.+?) items?/i;
 // order matters: "small first aid kit" must be tested before "first aid kit",
 // or every small kit would be counted as a full one
@@ -1148,7 +1156,8 @@ const ARM_COLS = [
   {k:"fak",   label:"First aid",  css:"--it-fak"},
   {k:"morph", label:"Morphine",   css:"--it-morph"},
   {k:"blood", label:"Blood bags", css:"--it-blood"},
-  {k:"other", label:"Other",      css:"--it-other"}
+  {k:"other", label:"Other",      css:"--it-other"},
+  {k:"pts",   label:"Faction points", css:"--it-pts"}
 ];
 async function syncArmoury(){
   if(!war || war.custom) return;
@@ -1172,21 +1181,48 @@ async function syncArmoury(){
     to = oldest-1;                                     // walk backwards; news comes newest-first
   }
   if(added){ armoury.sort((a,b)=>a.t-b.t); save(LS.arm(war.warId), armoury) }
+  await syncPoints();
   return added;
+}
+async function syncPoints(){
+  const from = war.start - 72*3600;
+  let to = war.end && war.end<now()? war.end+300 : now();
+  let pages=0, added=0;
+  while(pages++ < 10){
+    const r = await api("/faction/news", {cat:"giveFunds", from, to, limit:100});
+    const list = r.news || [];
+    let oldest=Infinity;
+    for(const n of list){
+      oldest=Math.min(oldest, n.timestamp);
+      if(ptsIds.has(n.id)) continue;
+      const m=PTS_RE.exec(n.text||"");
+      if(!m) continue;                        // money gifts and everything else
+      ptsIds.add(n.id);
+      ptsGiven.push({t:n.timestamp, id:+m[1], name:m[2], n:+m[3].replace(/,/g,"")});
+      added++;
+    }
+    if(list.length<100 || !isFinite(oldest) || oldest<=from) break;
+    to = oldest-1;
+  }
+  if(added){ ptsGiven.sort((a,b)=>a.t-b.t); save(LS.pts(war.warId), ptsGiven) }
 }
 function armCounts(){
   const per={};
   for(const a of armoury){
-    const p=per[a.id]||(per[a.id]={id:a.id,name:a.name,pre:0,war:0,sfak:0,fak:0,morph:0,blood:0,other:0});
+    const p=per[a.id]||(per[a.id]={id:a.id,name:a.name,pre:0,war:0,sfak:0,fak:0,morph:0,blood:0,other:0,pts:0});
     const c=armClass(a.item);
     if(c==="xan"){ if(a.t<war.start) p.pre++; else p.war++ }
     else p[c]++;
+  }
+  for(const g of ptsGiven){
+    const p=per[g.id]||(per[g.id]={id:g.id,name:g.name,pre:0,war:0,sfak:0,fak:0,morph:0,blood:0,other:0,pts:0});
+    p.pts+=g.n;
   }
   return per;
 }
 function renderArmoury(){
   const el=$("armRows");
-  if(!armoury.length){
+  if(!armoury.length && !ptsGiven.length){
     el.innerHTML=`<p class="meta">Nothing from the faction armoury in this window yet.</p>`;
     $("artblBody").innerHTML=""; $("artblFoot").innerHTML=""; $("armMeta").textContent="";
     $("armHint").textContent="Faction news only logs items taken from the faction armoury — anything a member bought themselves never appears here.";
@@ -1200,9 +1236,12 @@ function renderArmoury(){
   const X=t=>100*(t-t0)/(t1-t0);
   const per={};
   for(const a of armoury){ if(a.t<t0||a.t>t1) continue; (per[a.id]=per[a.id]||{name:a.name, evs:[]}).evs.push(a) }
+  for(const g of ptsGiven){ if(g.t<t0||g.t>t1) continue;
+    (per[g.id]=per[g.id]||{name:g.name, evs:[]}).evs.push({t:g.t, item:`${g.n} faction points`, pts:true}) }
+  for(const k in per) per[k].evs.sort((a,b)=>a.t-b.t);
   const ids=Object.keys(per).sort((a,b)=>per[b].evs.length-per[a].evs.length);
   el.innerHTML = ids.length? ids.map(id=>{
-    let bars=per[id].evs.map(a=>`<div class="tl-tick am ${armClass(a.item)}" style="left:${X(a.t).toFixed(2)}%" title="${esc(a.item)} · ${fmtDT(a.t)}"></div>`).join("");
+    let bars=per[id].evs.map(a=>`<div class="tl-tick am ${a.pts?"pts":armClass(a.item)}" style="left:${X(a.t).toFixed(2)}%" title="${esc(a.item)} · ${fmtDT(a.t)}"></div>`).join("");
     if(war.start>=t0&&war.start<=t1) bars+=`<div class="tl-mark" style="left:${X(war.start).toFixed(2)}%"></div>`;
     return `<div class="tl-row"><div class="tl-name">${esc(per[id].name)}</div><div class="tl-band">${bars}</div></div>`;
   }).join("") : `<p class="meta">No armoury use inside the current zoom window.</p>`;
@@ -1218,7 +1257,10 @@ function renderArmoury(){
     + ARM_COLS.map(c=>`<td>${S(c.k)}</td>`).join("");
   $("armHint").innerHTML = `Each tick is one item taken from the <b>faction armoury</b>, at the exact minute it happened — the amber line is the war start. `
     + `Rows are sorted by how much someone took. This only sees armoury items: <b>xanax a member bought themselves never appears here</b>, so these are a floor, not a total. `
-    + `Someone showing little here may still be using plenty of their own.`;
+    + `Someone showing little here may still be using plenty of their own. `
+    + `<b>Faction points given</b> is points handed to a member from the faction — that is how faction-funded refills are paid for, `
+    + `but Torn's API never logs the refill itself, so this is the allocation, not proof it was spent on one. `
+    + `Members' faction points balances normally sit at zero, so in practice points given out are points used.`;
 }
 
 
@@ -1245,7 +1287,7 @@ $("switchWar").onclick = async ()=>{
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
   war=null; localStorage.removeItem(LS.war);
   attacks=[]; attackIds=new Set(); snaps=[]; lastStatus={}; memberDir={};
-  enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null; armoury=[]; armIds=new Set();
+  enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null; armoury=[]; armIds=new Set(); ptsGiven=[]; ptsIds=new Set();
   liveMode=true;
   for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=true;
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
@@ -1416,7 +1458,7 @@ $("pauseBtn").onclick=()=>{ paused=!paused; $("pauseBtn").textContent=paused?"Re
 $("forgetWar").onclick=()=>{ if(!war)return; if(!confirm("Clear stored hits and statuses for this war?"))return;
   localStorage.removeItem(LS.atk(war.warId)); localStorage.removeItem(LS.snap(war.warId));
   localStorage.removeItem(LS.esnap(war.warId)); localStorage.removeItem(LS.med(war.warId));
-  localStorage.removeItem(LS.arm(war.warId));
+  localStorage.removeItem(LS.arm(war.warId)); localStorage.removeItem(LS.pts(war.warId));
   localStorage.removeItem(LS.war); location.reload() };
 $("forgetAll").onclick=()=>{ if(!confirm("Forget everything, including the API key?"))return;
   for(const k of Object.keys(localStorage)) if(k.startsWith("twl_")) localStorage.removeItem(k);
