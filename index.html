@@ -500,7 +500,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:48</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:54</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -821,6 +821,7 @@ function startTracking(){
   renderTerms();
   liveMode = true; scrubT = clampT(now());
   renderAll();              // draw cached data at once: a failing first poll
+  window.scrollTo(0,0);     // entering a war is a page change, not a jump within one
   schedule(); tick(true);   // used to leave the whole war page blank
 }
 function schedule(){
