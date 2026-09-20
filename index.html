@@ -271,19 +271,21 @@ details.settings summary{cursor:pointer}
 <!-- MED-OUT DETECTOR (from the hit log) -->
 <section id="medCard" class="card" hidden>
   <div class="scrubhead">
-    <h2 style="margin:0">Med-out detector — rebuilt from the hit log</h2>
+    <h2 style="margin:0">Med-out farming — repeat hits on the same player</h2>
     <div class="meta" id="medCount"></div>
   </div>
   <div class="zoomrow">
-    <span class="lbl">Flag a return within</span>
-    <input type="range" id="medWin" min="120" max="2400" step="60" style="width:180px">
-    <span id="medWinLbl" style="color:var(--amber); font-weight:600; min-width:68px"></span>
-    <span class="gap"></span>
-    <label class="inl"><input type="checkbox" id="medMug" style="width:auto"> count mugs as hospitalising</label>
+    <span class="lbl">Flag when</span>
+    <input type="number" id="medHits" min="2" max="10" style="width:52px">
+    <span class="lbl">hits land on the same player within</span>
+    <input type="number" id="medBurst" min="15" max="600" step="15" style="width:60px">
+    <span class="lbl">s · run ends after</span>
+    <input type="number" id="medGap" min="60" max="1800" step="30" style="width:60px">
+    <span class="lbl">s with no hit</span>
   </div>
   <div class="tblwrap">
-    <table id="mdtbl" style="min-width:620px">
-      <thead><tr><th style="text-align:left">Player</th><th style="text-align:left">Side</th><th>Suspected med-outs</th><th>Fastest return</th><th style="text-align:left">When</th></tr></thead>
+    <table id="mdtbl" style="min-width:660px">
+      <thead><tr><th style="text-align:left">Player</th><th style="text-align:left">Side</th><th>Farmed hits made</th><th>Farmed hits taken</th><th>Runs</th><th style="text-align:left">Paired with</th></tr></thead>
       <tbody id="mdtblBody"></tbody>
     </table>
   </div>
@@ -362,7 +364,7 @@ const LS = {
   atk:id=>"twl_atk_"+id, snap:id=>"twl_snap_"+id,
   esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id
 };
-let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60, medWin:600, medMug:true};
+let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60, medHits:3, medBurst:60, medGap:300};
 let war = load(LS.war) || null;   // {facId,facName,warId,oppId,oppName,start,end,terms,label,custom}
 let attacks = [];                  // normalised, sorted by t
 let attackIds = new Set();
@@ -1019,69 +1021,86 @@ function renderTimelines(){
     : `No live status was recorded for this period, so this is rebuilt from the attack log: ticks are hits made (top, green) and taken (bottom, red); faded red bands estimate hospital stays after being hospitalised. Self-hosps and flights can't be recovered for past wars — a quiet band with no red ticks pre-terms is your turtle.`;
 }
 
-/* ---------- med-out detection from the hit log ----------
-   You cannot attack someone who is in hospital, so every attack on a player is
-   proof they were out at that moment — even a failed one. If a hospitalising
-   hit is followed by another attack on the same player far sooner than a
-   hospital stay would allow, they medded or were revived. Unlike the worker's
-   live detection this works on wars that finished before the worker existed,
-   but it is inference: it cannot see the actual hospital timer, and meds and
-   revives look identical. MIN_REHIT drops near-simultaneous hits, which are
-   overlapping fights rather than an early exit. */
-const MIN_REHIT = 90;
-function hospResults(){
-  const s = new Set(["Hospitalized","Hospitalised"]);
-  if(cfg.medMug!==false) s.add("Mugged");
-  return s;
-}
-function computeLogMeds(uptoT){
-  const HOSP=hospResults(), win=cfg.medWin||600, evs=[];
-  const lastHosp={};                         // defender id -> when they were put in hospital
+/* ---------- med-out farming from the hit log ----------
+   A med-out agreement is a deal with the other side: they pull themselves out
+   of hospital straight away so you can farm hits off them, then you do the
+   same back. The fingerprint is one attacker hitting the SAME player over and
+   over in quick succession — nobody gets that many hits on one person in a
+   war unless that person is choosing to come straight back out.
+
+   A run starts when medHits hits land on the same pair inside medBurst
+   seconds, and every further hit on that pair keeps counting until medGap
+   seconds pass with no hit. After that the pair has to trigger again.
+
+   Stealthed attackers arrive with no id and show as "someone", so they are
+   bucketed per defender as a single unknown attacker and marked "?" — that
+   bucket could be one farmer or several different people. */
+function medCfg(){ return {n:cfg.medHits||3, burst:cfg.medBurst||60, gap:cfg.medGap||300} }
+function computeFarmRuns(uptoT){
+  const {n,burst,gap}=medCfg();
+  const pairs={};
   for(const a of attacks){
     if(a.t>uptoT) break;
-    if(!isWarAtk(a) || !a.dId) continue;
-    const from=lastHosp[a.dId];
-    if(from){
-      const gap=a.t-from;
-      if(gap>=MIN_REHIT && gap<=win)
-        evs.push({id:a.dId, name:a.dName, fac:a.dFac, t:a.t, gap});
-    }
-    lastHosp[a.dId] = HOSP.has(a.res) ? a.t : null;
+    if(!isWarAtk(a) || !a.dId || !WIN.has(a.res)) continue;
+    const k=(a.aId||"?")+">"+a.dId;            // stealthed hits share one bucket per defender
+    (pairs[k]=pairs[k]||{aId:a.aId, aName:a.aName, aFac:a.aFac, dId:a.dId, dName:a.dName, dFac:a.dFac, hits:[]}).hits.push(a.t);
   }
-  return evs;
+  const runs=[];
+  for(const p of Object.values(pairs)){
+    let run=[], live=false;
+    const close=()=>{ if(live&&run.length) runs.push({aId:p.aId,aName:p.aName,aFac:p.aFac,dId:p.dId,dName:p.dName,dFac:p.dFac,n:run.length,from:run[0],to:run[run.length-1]}); run=[]; live=false };
+    for(const t of p.hits){
+      if(run.length && t-run[run.length-1]>gap) close();
+      run.push(t);
+      if(!live && run.length>=n && t-run[run.length-n]<=burst){
+        run=run.slice(-n);                      // the burst itself opens the run
+        live=true;
+      }
+    }
+    close();
+  }
+  return runs;
 }
 function renderMedLog(){
-  const win=cfg.medWin||600;
-  $("medWin").value=win; $("medMug").checked=cfg.medMug!==false;
-  $("medWinLbl").textContent = win<3600? Math.round(win/60)+" min" : (win/3600).toFixed(1)+" h";
-  const evs=computeLogMeds(scrubT);
+  const c=medCfg();
+  $("medHits").value=c.n; $("medBurst").value=c.burst; $("medGap").value=c.gap;
+  const runs=computeFarmRuns(scrubT);
   const per={};
-  for(const e of evs){
-    const p=per[e.id]||(per[e.id]={id:e.id,name:e.name,fac:e.fac,n:0,min:Infinity,ts:[]});
-    p.n++; p.min=Math.min(p.min,e.gap); p.ts.push(e.t);
+  const get=(id,name,fac)=>per[id]||(per[id]={id,name,fac,made:0,taken:0,runs:0,with:new Set()});
+  for(const r of runs){
+    if(r.aId){ const A=get(r.aId,r.aName,r.aFac); A.made+=r.n; A.runs++; A.with.add(r.dName||r.dId) }
+    const D=get(r.dId,r.dName,r.dFac); D.taken+=r.n; D.runs++;
+    D.with.add(r.aId? (r.aName||r.aId) : "someone ?");
   }
-  const rows=Object.values(per).sort((a,b)=> b.n-a.n || a.min-b.min);
-  const them=rows.filter(r=>r.fac!=war.facId).reduce((s,r)=>s+r.n,0);
-  const us=rows.filter(r=>r.fac==war.facId).reduce((s,r)=>s+r.n,0);
-  $("medCount").textContent = rows.length? `${them} on their side · ${us} on ours` : "none found";
+  const rows=Object.values(per).sort((a,b)=> (b.made+b.taken)-(a.made+a.taken));
+  const hits=runs.reduce((s,r)=>s+r.n,0);
+  const theirs=runs.filter(r=>r.aFac!=war.facId).reduce((s,r)=>s+r.n,0);
+  $("medCount").textContent = runs.length
+    ? `${hits} farmed hits in ${runs.length} run${runs.length>1?"s":""} · ${theirs} of them by their side`
+    : "nothing flagged";
   $("mdtblBody").innerHTML = rows.length
     ? rows.map(r=>{
-        const when=r.ts.slice(0,4).map(t=>fmtDT(t)).join(", ")+(r.ts.length>4? ` +${r.ts.length-4} more`:"");
         const mine=r.fac==war.facId;
+        const partners=[...r.with].slice(0,3).join(", ")+(r.with.size>3? ` +${r.with.size-3}`:"");
         return `<tr><td style="text-align:left" class="name">${esc(r.name||r.id)}</td>`
              + `<td style="text-align:left" class="${mine?'pos':'neg'}">${mine?"ours":"theirs"}</td>`
-             + `<td>${r.n}</td><td>${Math.round(r.min/60)}m ${r.min%60}s</td>`
-             + `<td style="text-align:left" class="meta">${when}</td></tr>`;
+             + `<td class="${r.made?'pos':'zero'}">${r.made||"–"}</td>`
+             + `<td class="${r.taken?'neg':'zero'}">${r.taken||"–"}</td>`
+             + `<td>${r.runs}</td>`
+             + `<td style="text-align:left" class="meta">${esc(partners)}</td></tr>`;
       }).join("")
-    : `<tr><td colspan="5" class="meta">No suspected med-outs in view. Widen the window, or there simply weren't any.</td></tr>`;
-  $("medHint").innerHTML = `A player was hospitalised, then attacked again within <b>${$("medWinLbl").textContent}</b> — far sooner than a hospital stay allows, so they medded or were revived. `
-    + `Hits less than ${MIN_REHIT}s apart are ignored as overlapping fights. This is inference from the attack log, so it covers past wars, but it can't tell meds from revives and a genuinely short stay on a low-level player can look the same. `
-    + `The worker's live detection (Enemy watch) is exact where it has data. `
-    + (cfg.medMug!==false? `Mugs are counted as hospitalising — untick that if mugs leave players attackable, as it would turn ordinary farming into phantom med-outs.` : `Only 'Hospitalized' results count as putting someone in hospital.`);
+    : `<tr><td colspan="6" class="meta">No repeat-hit runs in view. Either nobody is farming, or the thresholds are too strict.</td></tr>`;
+  $("medHint").innerHTML = `A med-out agreement is a deal with the other side: they pull themselves straight out of hospital so you can farm hits off them, then you return the favour. `
+    + `A run opens when <b>${c.n} hits land on the same player inside ${c.burst}s</b>, and keeps counting every further hit on that pair until <b>${c.gap}s</b> pass with no hit — then it has to trigger again. `
+    + `"Farmed hits made" is what that player collected off a willing target; "taken" is what they handed over. `
+    + `Stealthed attackers have no id and all show as "someone ?", so hits from them are grouped per victim and may be several different people. Only successful hits count.`;
 }
-$("medWin").oninput=()=>{ cfg.medWin=+$("medWin").value; save(LS.cfg,cfg); renderMedLog() };
-$("medMug").onchange=()=>{ cfg.medMug=$("medMug").checked; save(LS.cfg,cfg); renderMedLog() };
-
+for(const id of ["medHits","medBurst","medGap"]) $(id).onchange=()=>{
+  cfg.medHits=Math.max(2,+$("medHits").value||3);
+  cfg.medBurst=Math.max(15,+$("medBurst").value||60);
+  cfg.medGap=Math.max(60,+$("medGap").value||300);
+  save(LS.cfg,cfg); renderMedLog();
+};
 /* ---------- csv ---------- */
 $("csvBtn").onclick=()=>{
   const rows=aggregate(scrubT);
