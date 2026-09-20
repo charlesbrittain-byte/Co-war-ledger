@@ -1,0 +1,15 @@
+name = "ck-war-ledger"
+main = "worker.js"
+compatibility_date = "2026-09-20"
+
+# Every 2 minutes, not 1: the free KV tier allows 1,000 writes/day.
+[triggers]
+crons = ["*/2 * * * *"]
+
+[[kv_namespaces]]
+binding = "LEDGER"
+id = "e2ec4e5d0e5a4d269ef1fb6e2234f6ce"
+
+# Secrets are set with `wrangler secret put`, never committed here:
+#   TORN_API_KEY   - Torn Limited key with faction API access
+#   TRACKER_TOKEN  - shared secret with the tracker page
