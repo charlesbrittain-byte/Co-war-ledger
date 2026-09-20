@@ -68,6 +68,24 @@ label.inl{color:var(--dim); font-size:13px; display:flex; align-items:center; ga
 }
 .scrub input[type=range]::-moz-range-thumb{width:3px; height:96px; background:var(--amber); border:none; border-radius:0; cursor:ew-resize}
 .scrub-labels{display:flex; justify-content:space-between; color:var(--faint); font-size:12px; margin-top:2px}
+/* war-board: two faction tabs over a member table, like Torn's own war page */
+.wb{border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:4px}
+.wb-tabs{display:flex}
+.wb-tab{flex:1; display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:10px 14px; cursor:pointer; background:#171A1E; border:none; border-bottom:1px solid var(--line);
+  font-size:17px; font-weight:700; color:var(--faint); border-radius:0; text-align:left}
+.wb-tab:first-child{border-right:1px solid var(--line)}
+.wb-tab .n{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.wb-tab.us{color:#8FB89B} .wb-tab.them{color:#C98A8E}
+.wb-tab.on{background:var(--panel2); color:var(--text)}
+.wb-tab.on.us .v{color:var(--up)} .wb-tab.on.them .v{color:var(--down)}
+.wb-tab:hover{border-color:var(--dim)}
+.wb table{min-width:0; font-size:14px}
+.wb th{background:#171A1E; cursor:default; font-size:13px}
+.wb td,.wb th{border-bottom:1px solid var(--line); padding:7px 10px}
+.wb tbody tr:hover td{background:#20262C}
+.wb tfoot td{font-weight:700; border-bottom:none; background:#171A1E}
+.wb .lvl{color:var(--dim)}
 /* zoom controls (shared by the timeline and the turtle board) */
 .zoomrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px}
 .zoomrow .lbl{color:var(--faint); font-size:12px; margin-right:2px}
@@ -283,11 +301,18 @@ details.settings summary{cursor:pointer}
     <input type="number" id="medGap" min="60" max="1800" step="30" style="width:60px">
     <span class="lbl">s with no hit</span>
   </div>
-  <div class="tblwrap">
-    <table id="mdtbl" style="min-width:660px">
-      <thead><tr><th style="text-align:left">Player</th><th style="text-align:left">Side</th><th>Farmed hits made</th><th>Farmed hits taken</th><th>Runs</th><th style="text-align:left">Paired with</th></tr></thead>
-      <tbody id="mdtblBody"></tbody>
-    </table>
+  <div class="wb">
+    <div class="wb-tabs">
+      <button class="wb-tab us" id="wbUs" data-side="us"><span class="n">–</span><span class="v">0</span></button>
+      <button class="wb-tab them" id="wbThem" data-side="them"><span class="n">–</span><span class="v">0</span></button>
+    </div>
+    <div class="tblwrap">
+      <table id="mdtbl">
+        <thead><tr><th style="text-align:left">Members</th><th>Level</th><th>Farmed made</th><th>Farmed taken</th><th>Runs</th><th style="text-align:left">Paired with</th></tr></thead>
+        <tbody id="mdtblBody"></tbody>
+        <tfoot><tr id="mdtblFoot"></tr></tfoot>
+      </table>
+    </div>
   </div>
   <p class="hint" id="medHint"></p>
 </section>
@@ -369,7 +394,7 @@ let war = load(LS.war) || null;   // {facId,facName,warId,oppId,oppName,start,en
 let attacks = [];                  // normalised, sorted by t
 let attackIds = new Set();
 let snaps = [];                    // [{t, ch:{id:[state,until,cause]}}]
-let memberDir = {};                // id -> {name,pos}
+let memberDir = {};                // id -> {name,pos,lvl}
 let lastStatus = {};               // id -> {state,until,cause,since}
 let enemyDir = {};                 // id -> {name,lvl}
 let enemyStatus = {};              // id -> {state,until,since}
@@ -534,7 +559,7 @@ async function pollMembers(){
   const list = r.members || [];
   const t = now(); const ch = {};
   for(const m of list){
-    memberDir[m.id] = {name:m.name, pos:m.position||""};
+    memberDir[m.id] = {name:m.name, pos:m.position||"", lvl:m.level||0};
     const st = m.status||{}; const state = st.state||"Okay"; const until = st.until||0;
     let cause = "";
     if(state==="Hospital") cause = classifyHosp(m,t);
@@ -821,6 +846,14 @@ function renderHeader(){
     const left = chainInfo.endTs? chainInfo.endTs-now() : 0;
     s+=` <span class="meta">·</span> <span style="color:var(--amber)">chain ${fmtNum(chainInfo.current)}${left>0? " · "+fmtLeft(left)+" left":""}</span>`;
   }
+  // farmed-hit totals for our side, so med-out activity is visible without scrolling
+  if(attacks.length){
+    const {per}=farmTotals(scrubT);
+    const ours=per.filter(r=>r.fac==war.facId);
+    const made=ours.reduce((x,r)=>x+r.made,0), taken=ours.reduce((x,r)=>x+r.taken,0);
+    if(made||taken)
+      s+=` <span class="meta">·</span> <span class="meta">farmed</span> <span class="pos">${made}</span><span class="meta">/</span><span class="neg">${taken}</span>`;
+  }
   v.innerHTML=s; updDot();
 }
 function clampT(t){ const hi = war.end&&war.end<now()? war.end : now(); return Math.min(Math.max(t,war.start),hi) }
@@ -1061,40 +1094,66 @@ function computeFarmRuns(uptoT){
   }
   return runs;
 }
-function renderMedLog(){
-  const c=medCfg();
-  $("medHits").value=c.n; $("medBurst").value=c.burst; $("medGap").value=c.gap;
-  const runs=computeFarmRuns(scrubT);
-  const per={};
+let medSide = "us";                 // which faction's board is showing; ours by default
+function farmTotals(uptoT){
+  const runs=computeFarmRuns(uptoT), per={};
   const get=(id,name,fac)=>per[id]||(per[id]={id,name,fac,made:0,taken:0,runs:0,with:new Set()});
   for(const r of runs){
     if(r.aId){ const A=get(r.aId,r.aName,r.aFac); A.made+=r.n; A.runs++; A.with.add(r.dName||r.dId) }
     const D=get(r.dId,r.dName,r.dFac); D.taken+=r.n; D.runs++;
     D.with.add(r.aId? (r.aName||r.aId) : "someone ?");
   }
-  const rows=Object.values(per).sort((a,b)=> (b.made+b.taken)-(a.made+a.taken));
-  const hits=runs.reduce((s,r)=>s+r.n,0);
-  const theirs=runs.filter(r=>r.aFac!=war.facId).reduce((s,r)=>s+r.n,0);
+  return {runs, per:Object.values(per)};
+}
+function lvlOf(r){
+  const m=memberDir[r.id], e=enemyDir[r.id];
+  let l=(m&&m.lvl)||(e&&e.lvl)||0;
+  if(!l) for(const a of attacks){ if(a.dId==r.id && a.dl){ l=a.dl; break } }   // fall back to the attack log
+  return l||0;
+}
+function renderMedLog(){
+  const c=medCfg();
+  $("medHits").value=c.n; $("medBurst").value=c.burst; $("medGap").value=c.gap;
+  const {runs, per}=farmTotals(scrubT);
+  const mine=r=>r.fac==war.facId;
+  const ours=per.filter(mine), theirs=per.filter(r=>!mine(r));
+  const sum=(a,k)=>a.reduce((s,r)=>s+r[k],0);
+  const oursMade=sum(ours,"made"), oursTaken=sum(ours,"taken");
+  const themMade=sum(theirs,"made"), themTaken=sum(theirs,"taken");
+
+  $("wbUs").querySelector(".n").textContent = war.facName || "Our faction";
+  $("wbThem").querySelector(".n").textContent = war.oppName || "Enemy";
+  $("wbUs").querySelector(".v").textContent = oursMade;
+  $("wbThem").querySelector(".v").textContent = themMade;
+  $("wbUs").className = "wb-tab us"+(medSide==="us"?" on":"");
+  $("wbThem").className = "wb-tab them"+(medSide==="them"?" on":"");
+
+  const rows=(medSide==="us"? ours:theirs).sort((a,b)=> (b.made-a.made) || (b.taken-a.taken));
   $("medCount").textContent = runs.length
-    ? `${hits} farmed hits in ${runs.length} run${runs.length>1?"s":""} · ${theirs} of them by their side`
+    ? `${runs.reduce((s,r)=>s+r.n,0)} farmed hits in ${runs.length} run${runs.length>1?"s":""}`
     : "nothing flagged";
   $("mdtblBody").innerHTML = rows.length
     ? rows.map(r=>{
-        const mine=r.fac==war.facId;
+        const lvl=lvlOf(r);
         const partners=[...r.with].slice(0,3).join(", ")+(r.with.size>3? ` +${r.with.size-3}`:"");
         return `<tr><td style="text-align:left" class="name">${esc(r.name||r.id)}</td>`
-             + `<td style="text-align:left" class="${mine?'pos':'neg'}">${mine?"ours":"theirs"}</td>`
+             + `<td class="lvl">${lvl||"–"}</td>`
              + `<td class="${r.made?'pos':'zero'}">${r.made||"–"}</td>`
              + `<td class="${r.taken?'neg':'zero'}">${r.taken||"–"}</td>`
              + `<td>${r.runs}</td>`
              + `<td style="text-align:left" class="meta">${esc(partners)}</td></tr>`;
       }).join("")
-    : `<tr><td colspan="6" class="meta">No repeat-hit runs in view. Either nobody is farming, or the thresholds are too strict.</td></tr>`;
+    : `<tr><td colspan="6" class="meta">No repeat-hit runs on this side in view.</td></tr>`;
+  const m=medSide==="us"? oursMade:themMade, tk=medSide==="us"? oursTaken:themTaken;
+  $("mdtblFoot").innerHTML = `<td style="text-align:left">Total</td><td class="lvl">––</td>`
+    + `<td class="${m?'pos':'zero'}">${m}</td><td class="${tk?'neg':'zero'}">${tk}</td>`
+    + `<td>${rows.reduce((s,r)=>s+r.runs,0)}</td><td></td>`;
   $("medHint").innerHTML = `A med-out agreement is a deal with the other side: they pull themselves straight out of hospital so you can farm hits off them, then you return the favour. `
     + `A run opens when <b>${c.n} hits land on the same player inside ${c.burst}s</b>, and keeps counting every further hit on that pair until <b>${c.gap}s</b> pass with no hit — then it has to trigger again. `
-    + `"Farmed hits made" is what that player collected off a willing target; "taken" is what they handed over. `
-    + `Stealthed attackers have no id and all show as "someone ?", so hits from them are grouped per victim and may be several different people. Only successful hits count.`;
+    + `"Farmed made" is what that player collected off a willing target; "taken" is what they handed over. `
+    + `Stealthed attackers have no id and all read as "someone ?", so hits from them are grouped per victim and may be several different people. Only successful hits count.`;
 }
+for(const id of ["wbUs","wbThem"]) $(id).onclick=()=>{ medSide=$(id).dataset.side; renderMedLog() };
 for(const id of ["medHits","medBurst","medGap"]) $(id).onchange=()=>{
   cfg.medHits=Math.max(2,+$("medHits").value||3);
   cfg.medBurst=Math.max(15,+$("medBurst").value||60);
