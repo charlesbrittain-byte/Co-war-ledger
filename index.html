@@ -126,6 +126,8 @@ th.sorted{color:var(--amber)}
 .sortsub{cursor:pointer}
 .sortsub:hover{color:var(--text)}
 .sortsub.on{color:var(--amber); font-weight:700}
+td.warjump{cursor:pointer}
+td.warjump:hover{color:var(--amber)}
 th:first-child,td:first-child{text-align:left}
 td.name{font-weight:600; font-size:16px}
 tbody tr:hover td{background:#22272D}
@@ -500,7 +502,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:54</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 15:10</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -1851,7 +1853,7 @@ $("switchWar").onclick = async ()=>{
 };
 
 /* ---------- member detail (last 5 wars) ---------- */
-let allWars=[], histCache={}, mSeq=0;
+let allWars=[], histCache={}, mSeq=0, mWars=[];
 async function ensureWarHistory(){
   if(allWars.length) return allWars;
   const rw=await api("/faction/rankedwars");
@@ -1913,6 +1915,7 @@ async function openMemberDetail(id){
     const eligible = joined==null? all : all.filter(w=>(w.end||now()) >= joined);
     const hidden = all.length-eligible.length;
     const wars=eligible.slice(0,5);
+    mWars=wars;                       // rows below are clickable: index into this
     if(seq!==mSeq) return;
     $("mTitle").textContent = nm+(joined!=null? ` — since ${fmtDate(joined)}` : " — last 5 wars");
     if(!wars.length){
@@ -1921,20 +1924,21 @@ async function openMemberDetail(id){
         : "No ranked wars found for your faction."}</td></tr>`;
       return;
     }
-    let rows=""; const tot={of:0,as:0,rg:0,ag:0,rl:0};
+    let rows=""; const tot={of:0,as:0,rg:0,ag:0,rl:0}; let wi=-1;
     for(const w of wars){
+      wi++;
       let arr;
       try{ arr=await loadWarAttacksCached(w) }
       catch(e){
         if(seq!==mSeq) return;
-        rows+=`<tr><td style="text-align:left">${esc(w.oppName)}<div class="sub">${fmtDate(w.start)}</div></td><td colspan="7" class="meta">${esc(e.message)}</td></tr>`;
+        rows+=`<tr><td style="text-align:left" class="name warjump" data-wi="${wi}">${esc(w.oppName)}<div class="sub">${fmtDate(w.start)}</div></td><td colspan="7" class="meta">${esc(e.message)}</td></tr>`;
         $("mtblBody").innerHTML=rows; continue;
       }
       if(seq!==mSeq) return;
       const s=statsFor(id,arr,w);
       tot.of+=s.of; tot.as+=s.as; tot.rg+=s.rg; tot.ag+=s.ag; tot.rl+=s.rl;
       const live=!w.end||w.end>now();
-      rows+=`<tr><td style="text-align:left">${esc(w.oppName)}<div class="sub">${fmtDate(w.start)}${live?" · live":""}</div></td>
+      rows+=`<tr><td style="text-align:left" class="name warjump" data-wi="${wi}" title="Open this war">${esc(w.oppName)}<div class="sub">${fmtDate(w.start)}${live?" · live":""}</div></td>
         <td>${s.of}</td><td class="${s.as?'':'zero'}">${s.as}</td><td class="pos">${fmtR(s.rg)}</td>
         <td class="${s.ag?'neg':'zero'}">${s.ag}</td><td class="${s.rl?'neg':'zero'}">${fmtR(s.rl)}</td>
         <td class="${s.net>0?'pos':s.net<0?'neg':'zero'}"><b>${fmtR(s.net)}</b></td>
@@ -1948,10 +1952,16 @@ async function openMemberDetail(id){
         ? `Joined the faction around <b>${fmtDate(joined)}</b>${hidden? ` — ${hidden} earlier war${hidden>1?"s":""} hidden, they weren't here for ${hidden>1?"them":"it"}.`:"."} `
           + `Torn reports whole days in faction and the count resets if someone leaves and rejoins, so that date is approximate. `
         : `No join date available for this member, so every war is shown. `)
-      + "Each past war's attack log is fetched once and cached on this device, so the first open takes a moment and later opens are instant.";
+      + "Click a war to open it in full. Each past war's attack log is fetched once and cached on this device, so the first open takes a moment and later opens are instant.";
   }catch(e){ if(seq===mSeq) $("mHint").textContent=e.message }
 }
 $("mClose").onclick=()=>{ $("mback").style.display="none" };
+$("mtblBody").addEventListener("click",e=>{
+  const td=e.target.closest("td.warjump"); if(!td) return;
+  const w=mWars[+td.dataset.wi]; if(!w) return;
+  $("mback").style.display="none";
+  trackWar(w);                       // same route as the dashboard's war table
+});
 $("mback").addEventListener("click",e=>{ if(e.target.id==="mback") $("mback").style.display="none" });
 $("tblBody").addEventListener("click",e=>{
   const td=e.target.closest("td.name");
