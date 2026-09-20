@@ -236,6 +236,21 @@ details.settings summary{cursor:pointer}
   <p class="hint" id="homeHint">The same figures you get by clicking a member during a war, totalled across recent wars. Each war's attack log is fetched once and cached on this device, so the first load takes a moment. Members only count for wars they were in the faction for.</p>
 </section>
 
+<!-- WAR PICK -->
+<section id="warpick" class="card" hidden>
+  <h2>War window</h2>
+  <div class="row">
+    <select id="warSel"></select>
+    <button id="applyWar" class="primary">Track this war</button>
+    <button id="resumeWar" class="ghost" hidden>Continue tracking ⟶</button>
+  </div>
+  <div class="row">
+    <label class="inl">Start <input type="datetime-local" id="cStart"></label>
+    <label class="inl">End <input type="datetime-local" id="cEnd"></label>
+    <span class="meta">(custom window — used if "Custom" is selected; leave end blank for ongoing)</span>
+  </div>
+</section>
+
 <!-- HOME ARMOURY -->
 <section id="homeArmCard" class="card" hidden>
   <div class="scrubhead">
@@ -265,27 +280,12 @@ details.settings summary{cursor:pointer}
   </div>
   <div class="tblwrap" style="margin-top:10px">
     <table id="hatbl" style="min-width:780px">
-      <thead><tr><th style="text-align:left">Member</th><th>Xanax</th><th>Small FAK</th><th>First aid</th><th>Morphine</th><th>Blood bags</th><th>Other</th><th>Faction points</th></tr></thead>
+      <thead><tr id="haHead"></tr></thead>
       <tbody id="hatblBody"></tbody>
       <tfoot><tr id="hatblFoot"></tr></tfoot>
     </table>
   </div>
   <p class="hint">Faction armoury only — items someone bought themselves never appear. Weekends are shaded, so a training weekend shows up as a burst of xanax against the grey. Each tick is the exact minute an item was taken; hover one to see what it was.</p>
-</section>
-
-<!-- WAR PICK -->
-<section id="warpick" class="card" hidden>
-  <h2>War window</h2>
-  <div class="row">
-    <select id="warSel"></select>
-    <button id="applyWar" class="primary">Track this war</button>
-    <button id="resumeWar" class="ghost" hidden>Continue tracking ⟶</button>
-  </div>
-  <div class="row">
-    <label class="inl">Start <input type="datetime-local" id="cStart"></label>
-    <label class="inl">End <input type="datetime-local" id="cEnd"></label>
-    <span class="meta">(custom window — used if "Custom" is selected; leave end blank for ongoing)</span>
-  </div>
 </section>
 
 <!-- TERMS -->
@@ -1551,7 +1551,17 @@ $("hmtblBody").addEventListener("click",e=>{
    Same faction news feeds as the in-war board, but over a plain date range so
    it covers training weekends, which don't sit inside a war window. Weekends
    are shaded so a training burst is obvious at a glance. */
-let homeArm=null;
+let homeArm=null, haSort={k:"xan",dir:-1};
+const HARM_COLS=[
+  {k:"name",  label:"Member",         left:true},
+  {k:"xan",   label:"Xanax",          css:"--it-xan"},
+  {k:"sfak",  label:"Small FAK",      css:"--it-sfak"},
+  {k:"fak",   label:"First aid",      css:"--it-fak"},
+  {k:"morph", label:"Morphine",       css:"--it-morph"},
+  {k:"blood", label:"Blood bags",     css:"--it-blood"},
+  {k:"other", label:"Other",          css:"--it-other"},
+  {k:"pts",   label:"Faction points", css:"--it-pts"}
+];
 async function fetchNewsRange(cat, from, to, maxPages){
   const out=[]; let cursor=to, pages=0;
   while(pages++ < maxPages){
@@ -1620,7 +1630,14 @@ function renderHomeArm(){
     if(wd===0||wd===6) bg+=`<div class="tl-weekend" style="left:${X(a).toFixed(2)}%;width:${(X(b)-X(a)).toFixed(2)}%"></div>`;
     if(d>from) bg+=`<div class="tl-day" style="left:${X(d).toFixed(2)}%"></div>`;
   }
-  const ids=Object.keys(per).sort((a,b)=>per[b].xan-per[a].xan || per[b].evs.length-per[a].evs.length);
+  // one sort drives both the chart rows and the table, so clicking "Xanax"
+  // puts the heaviest users at the top of the timeline too
+  const cmp=(a,b)=>{
+    const va=a[haSort.k]??0, vb=b[haSort.k]??0;
+    return (typeof va==="string"? va.localeCompare(vb) : va-vb)*haSort.dir;
+  };
+  const rows=Object.values(per).sort(cmp);
+  const ids=rows.map(r=>String(r.id));
   let axis=`<div class="tl-axis"><div class="tl-name">x</div><div class="ax">`;
   for(let d=startDay; d<to; d+=86400){
     const wd=new Date(d*1000).getUTCDay();
@@ -1635,15 +1652,21 @@ function renderHomeArm(){
       }).join("")
     : `<p class="meta">Nothing taken from the armoury in this period.</p>`;
   $("homeArmMeta").textContent=`${fmtDate(from)} → ${fmtDate(to)} · ${evs.length} event${evs.length===1?"":"s"} · loaded ${ago(homeArm.at)}`;
-  const rows=Object.values(per).sort((a,b)=>b.xan-a.xan);
+  $("haHead").innerHTML=HARM_COLS.map(c=>
+    `<th data-k="${c.k}" class="${haSort.k===c.k?"sorted":""}" style="${c.left?"text-align:left":""}">${c.label}</th>`).join("");
   const cell=(v,css)=>`<td class="${v?"":"zero"}" style="${v?`color:var(${css})`:""}">${v||"–"}</td>`;
   $("hatblBody").innerHTML=rows.map(r=>`<tr><td style="text-align:left" class="name">${esc(r.name)}</td>`
-    + cell(r.xan,"--it-xan")+cell(r.sfak,"--it-sfak")+cell(r.fak,"--it-fak")+cell(r.morph,"--it-morph")
-    + cell(r.blood,"--it-blood")+cell(r.other,"--it-other")+cell(r.pts,"--it-pts")+`</tr>`).join("");
+    + HARM_COLS.slice(1).map(c=>cell(r[c.k], c.css)).join("")+`</tr>`).join("");
   const S=k=>rows.reduce((x,r)=>x+(r[k]||0),0);
   $("hatblFoot").innerHTML=`<td style="text-align:left">Total</td>`
-    + ["xan","sfak","fak","morph","blood","other","pts"].map(k=>`<td>${S(k)}</td>`).join("");
+    + HARM_COLS.slice(1).map(c=>`<td>${S(c.k)}</td>`).join("");
 }
+$("haHead").addEventListener("click",e=>{
+  const th=e.target.closest("th[data-k]"); if(!th) return;
+  const k=th.dataset.k;
+  haSort = haSort.k===k? {k, dir:-haSort.dir} : {k, dir: k==="name"? 1 : -1};
+  renderHomeArm();
+});
 $("homeArmLoad").onclick=loadHomeArm;
 $("homeArmDays").onchange=()=>{ if(homeArm) loadHomeArm() };
 
