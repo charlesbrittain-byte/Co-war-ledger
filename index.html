@@ -500,7 +500,8 @@ details.settings summary{cursor:pointer}
 const LS = {
   cfg:"twl_cfg", war:"twl_war",
   atk:id=>"twl_atk_"+id, snap:id=>"twl_snap_"+id,
-  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id,  arm:id=>"twl_arm_"+id
+  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id, arm:id=>"twl_arm_"+id,
+  pts:id=>"twl_pts_"+id, ref:id=>"twl_ref_"+id
 };
 let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60, medHits:3, medBurst:60, medGap:300};
 let war = load(LS.war) || null;   // {facId,facName,warId,oppId,oppName,start,end,terms,label,custom}
@@ -757,7 +758,8 @@ function startTracking(){
   if(cfg.syncUrl) fetchServerSnaps().then(c=>{ if(c) renderAll() });
   if(war.terms) $("termsInput").value = tsToLocalInput(war.terms);
   liveMode = true; scrubT = clampT(now());
-  schedule(); tick(true);
+  renderAll();              // draw cached data at once: a failing first poll
+  schedule(); tick(true);   // used to leave the whole war page blank
 }
 function schedule(){
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
