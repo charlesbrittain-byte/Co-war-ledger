@@ -548,11 +548,15 @@ details.settings summary{cursor:pointer}
       <label class="inl"><input type="checkbox" id="syncTest" style="width:auto"> Read the worker's test recording</label>
       <span class="meta">For a dry run with no war on: pick a Custom window above, and this reads what the worker is recording under war id "test".</span>
     </div>
+    <div class="row">
+      <label class="inl"><input type="checkbox" id="syncByFac" style="width:auto"> Status recorded by faction, not by war</label>
+      <span class="meta">Tick this if you're using someone else's worker: it reads your faction's own status recording instead of their war's.</span>
+    </div>
     <p class="hint" id="syncMeta">Cloud sync off — statuses only record while a page is open. A free Cloudflare worker can record 24/7 and share one dataset with the whole leadership.</p>
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 15:16</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 21:09</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -869,6 +873,7 @@ function startTracking(){
   $("syncUrl").value=cfg.syncUrl||""; $("syncTok").value=cfg.syncTok||"";
   if(cfg.tlTall){ $("tlRows").classList.add("tl-tall"); $("tlTall").className="on" }
   $("syncTest").checked = !!cfg.syncTest;
+  $("syncByFac").checked = !!cfg.syncByFac;
   if(cfg.syncUrl){ fetchServerSnaps().then(c=>{ if(c) renderAll() }); fetchTerms().then(c=>{ if(c) renderAll() }) }
   renderTerms();
   liveMode = true; scrubT = clampT(now());
@@ -2023,10 +2028,15 @@ async function fetchServerSnaps(){
   if(!cfg.syncUrl || !war) return false;
   // a custom window normally has no server-side counterpart; test mode is the exception,
   // where the worker records under the fixed war id "test"
-  const warId = war.custom ? (cfg.syncTest? "test" : null) : war.warId;
-  if(!warId) return false;
+  // a shared worker records friendly factions by faction id rather than by war,
+  // since their war ids mean nothing to it
+  const byFac = cfg.syncByFac && cfg.facId;
+  const warId = byFac ? null : (war.custom ? (cfg.syncTest? "test" : null) : war.warId);
+  if(!byFac && !warId) return false;
   try{
-    const u = cfg.syncUrl.replace(/\/+$/,"") + "/snaps?war=" + encodeURIComponent(warId)
+    const u = cfg.syncUrl.replace(/\/+$/,"")
+            + (byFac? "/snaps?fac=" + encodeURIComponent(cfg.facId)
+                    : "/snaps?war=" + encodeURIComponent(warId))
             + (cfg.syncTok? "&token="+encodeURIComponent(cfg.syncTok) : "");
     const r = await fetch(u); const j = await r.json();
     if(j.error) throw new Error(j.error);
@@ -2059,6 +2069,7 @@ $("syncSave").onclick = ()=>{
   cfg.syncUrl = $("syncUrl").value.trim();
   cfg.syncTok = $("syncTok").value.trim();
   cfg.syncTest = $("syncTest").checked;
+  cfg.syncByFac = $("syncByFac").checked;
   save(LS.cfg,cfg);
   if(cfg.syncUrl && war) fetchServerSnaps().then(c=>{ if(c) renderAll() });
   else $("syncMeta").textContent = "Cloud sync off — statuses only record while a page is open.";

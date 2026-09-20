@@ -34,8 +34,14 @@ export default {
       return json({ error: "bad or missing token" }, 403, cors);
 
     if (url.pathname.endsWith("/snaps")) {
+      const facId = url.searchParams.get("fac");
+      if (facId) {                                   // a friendly faction's own recording
+        const doc = await env.LEDGER.get("fac:" + facId, "json");
+        if (!doc) return json({ ours: [], med: [], last: null, note: "this worker is not recording that faction" }, 200, cors);
+        return json({ ours: doc.ours, med: [], since: doc.since, last: doc.last }, 200, cors);
+      }
       const warId = url.searchParams.get("war");
-      if (!warId) return json({ error: "missing ?war=" }, 400, cors);
+      if (!warId) return json({ error: "missing ?war= or ?fac=" }, 400, cors);
       const doc = await env.LEDGER.get("war:" + warId, "json");
       if (!doc) return json({ ours: [], med: [], last: null, note: "no recordings for this war yet" }, 200, cors);
       return json({ ours: doc.ours, med: doc.med, since: doc.since, last: doc.last }, 200, cors);
@@ -68,7 +74,7 @@ export default {
       } else if (+env.TEST_UNTIL) meta.test = { recording: false, note: "test window has expired" };
       return json(meta, 200, cors);
     }
-    return json({ ok: true, endpoints: ["/snaps?war=ID", "/terms?war=ID", "/status"] }, 200, cors);
+    return json({ ok: true, endpoints: ["/snaps?war=ID", "/snaps?fac=ID", "/terms?war=ID", "/status"] }, 200, cors);
   }
 };
 
@@ -91,6 +97,46 @@ function testWindow(env, t) {
   const until = +env.TEST_UNTIL || 0;
   if (!until || t >= until) return null;
   return { warId: "test", oppId: +env.TEST_OPP || 0, start: 0, end: 0, test: true, until };
+}
+
+// Friendly factions (FRIEND_FACS, comma-separated ids) get their member statuses
+// recorded the same way ours are, under fac:<id>, so their copy of the page can
+// draw a real turtle board without running a worker of their own. Sampled less
+// often than our own war, and less often again while we are at war, to stay
+// inside the free tier's 1,000 KV writes/day.
+const FRIEND_KEEP = 14 * 86400;
+async function tickFriends(env, t, atWar) {
+  const ids = String(env.FRIEND_FACS || "").split(",").map(x => x.trim()).filter(Boolean);
+  if (!ids.length) return;
+  const every = atWar ? 6 : 4;                       // minutes between samples
+  if (Math.floor(t / 120) % (every / 2)) return;
+  for (const id of ids) {
+    try {
+      const r = await torn(env, "/faction/" + id + "/members");
+      const key = "fac:" + id;
+      const doc = (await env.LEDGER.get(key, "json")) || { ours: [], state: {}, since: t };
+      const ch = {};
+      for (const m of (r.members || [])) {
+        const st = m.status || {}; const state = st.state || "Okay"; const until = st.until || 0;
+        let cause = "";
+        if (state === "Hospital") {
+          const d = String(st.details || st.description || "").toLowerCase();
+          cause = (d.includes("hospitalized by") || d.includes("hospitalised by") ||
+                   d.includes("attacked by") || d.includes("mugged by")) ? "enemy" : "self";
+        }
+        const prev = doc.state[m.id];
+        if (!prev || prev[0] !== state || prev[2] !== cause) {
+          doc.state[m.id] = [state, until, cause, m.name];
+          ch[m.id] = [state, until, cause];
+        } else prev[1] = until;
+      }
+      if (!Object.keys(ch).length) continue;         // nothing changed, nothing to write
+      doc.ours.push({ t, ch });
+      doc.ours = doc.ours.filter(s => s.t > t - FRIEND_KEEP);
+      doc.last = t;
+      await env.LEDGER.put(key, JSON.stringify(doc));
+    } catch (e) { /* one faction failing must not stop the rest */ }
+  }
 }
 
 async function tick(env) {
@@ -126,6 +172,8 @@ async function tick(env) {
     }
   }
 
+  await tickFriends(env, t, !!meta.active);
+
   let act = meta.active;
   if (act && act.start > t) return;
   if (act && act.end && t > act.end + 1800) { // war over (30 min grace)
@@ -142,10 +190,7 @@ async function tick(env) {
   const key = "war:" + act.warId;
   const doc = (await env.LEDGER.get(key, "json")) || { ours: [], med: [], state: {}, estate: {}, since: t };
   try {
-    const [ours, enemy] = await Promise.all([
-      torn(env, "/faction/members"),
-      act.oppId ? torn(env, "/faction/" + act.oppId + "/members") : Promise.resolve({ members: [] })
-    ]);
+    const ours = await torn(env, "/faction/members");
 
     // our side: record status changes as diffs
     const ch = {};
@@ -164,15 +209,6 @@ async function tick(env) {
       } else prev[1] = until;
     }
     if (Object.keys(ch).length) doc.ours.push({ t, ch });
-
-    // enemy side: detect med-outs (left hospital well before their timer)
-    for (const m of (enemy.members || [])) {
-      const st = m.status || {}; const state = st.state || "Okay"; const until = st.until || 0;
-      const prev = doc.estate[m.id];
-      if (prev && prev[0] === "Hospital" && state !== "Hospital" && prev[1] && t < prev[1] - 90)
-        doc.med.push({ id: +m.id, name: m.name, t, early: prev[1] - t });
-      doc.estate[m.id] = [state, until, 0, m.name];
-    }
 
     doc.last = t;
     await env.LEDGER.put(key, JSON.stringify(doc));

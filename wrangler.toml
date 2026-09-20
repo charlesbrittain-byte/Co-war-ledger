@@ -12,6 +12,9 @@ crons = ["*/2 * * * *"]
 [vars]
 TEST_UNTIL = 1790149293
 TEST_OPP = 35840
+# Friendly factions whose member statuses we also record, so their copy of the
+# page gets a real turtle board without running a worker of their own.
+FRIEND_FACS = "35840"
 
 [[kv_namespaces]]
 binding = "LEDGER"
