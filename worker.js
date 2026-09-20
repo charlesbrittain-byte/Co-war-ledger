@@ -40,6 +40,22 @@ export default {
       if (!doc) return json({ ours: [], med: [], last: null, note: "no recordings for this war yet" }, 200, cors);
       return json({ ours: doc.ours, med: doc.med, since: doc.since, last: doc.last }, 200, cors);
     }
+    // Shared terms time: one value per war, so everyone's page agrees instead of
+    // each person keeping their own in browser storage. ?set=<unix> writes it,
+    // ?set=0 clears it, no ?set reads it.
+    if (url.pathname.endsWith("/terms")) {
+      const warId = url.searchParams.get("war");
+      if (!warId) return json({ error: "missing ?war=" }, 400, cors);
+      const key = "terms:" + warId;
+      if (url.searchParams.has("set")) {
+        const t = +url.searchParams.get("set") || 0;
+        if (!t) { await env.LEDGER.delete(key); return json({ terms: null }, 200, cors); }
+        await env.LEDGER.put(key, JSON.stringify({ terms: t, at: Math.floor(Date.now() / 1000) }));
+        return json({ terms: t }, 200, cors);
+      }
+      const doc = await env.LEDGER.get(key, "json");
+      return json(doc || { terms: null }, 200, cors);
+    }
     if (url.pathname.endsWith("/status")) {
       const meta = (await env.LEDGER.get("meta", "json")) || { note: "worker has not ticked yet — check the cron trigger" };
       const now = Math.floor(Date.now() / 1000);
@@ -52,7 +68,7 @@ export default {
       } else if (+env.TEST_UNTIL) meta.test = { recording: false, note: "test window has expired" };
       return json(meta, 200, cors);
     }
-    return json({ ok: true, endpoints: ["/snaps?war=ID", "/status"] }, 200, cors);
+    return json({ ok: true, endpoints: ["/snaps?war=ID", "/terms?war=ID", "/status"] }, 200, cors);
   }
 };
 

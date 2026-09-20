@@ -329,7 +329,7 @@ details.settings summary{cursor:pointer}
     <div id="termsSetView" class="row" style="gap:8px" hidden>
       <span class="lbl">Terms</span>
       <b id="termsWhen" style="color:var(--amber)">–</b>
-      <span class="meta">— the ledger splits before / after this</span>
+      <span class="meta" id="termsScope">— the ledger splits before / after this</span>
       <span class="gap"></span>
       <button id="termsEditBtn">Change</button>
       <button id="termsClear" class="ghost">clear</button>
@@ -486,7 +486,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:20</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:32</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -766,7 +766,7 @@ function startTracking(){
   $("syncUrl").value=cfg.syncUrl||""; $("syncTok").value=cfg.syncTok||"";
   if(cfg.tlTall){ $("tlRows").classList.add("tl-tall"); $("tlTall").className="on" }
   $("syncTest").checked = !!cfg.syncTest;
-  if(cfg.syncUrl) fetchServerSnaps().then(c=>{ if(c) renderAll() });
+  if(cfg.syncUrl){ fetchServerSnaps().then(c=>{ if(c) renderAll() }); fetchTerms().then(c=>{ if(c) renderAll() }) }
   renderTerms();
   liveMode = true; scrubT = clampT(now());
   renderAll();              // draw cached data at once: a failing first poll
@@ -775,7 +775,7 @@ function startTracking(){
 function schedule(){
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
   timers.atk = setInterval(()=>tick(false), Math.max(30,cfg.pAtk)*1000);
-  timers.mem = setInterval(async ()=>{ if(paused||!war) return; try{ await pollMembers(); await pollEnemy(); await pollChain(); await fetchServerSnaps(); ok(); renderAll() }catch(e){ fail(e) } }, Math.max(30,cfg.pMem)*1000);
+  timers.mem = setInterval(async ()=>{ if(paused||!war) return; try{ await pollMembers(); await pollEnemy(); await pollChain(); await fetchServerSnaps(); await fetchTerms(); ok(); renderAll() }catch(e){ fail(e) } }, Math.max(30,cfg.pMem)*1000);
   timers.scr = setInterval(()=>{ if(liveMode){ scrubT=clampT(now()); renderScrubOnly() } renderHeader() }, 15000);
 }
 async function tick(first){
@@ -907,6 +907,49 @@ $("termsSuggest").onclick = ()=>{
     + " Use Change if it's off.";
   applyTerms(pick.ts, note);
 };
+/* Terms are shared through the worker when cloud sync is on, so one person
+   setting them settles it for everyone rather than each browser keeping its
+   own copy. Without a worker configured it stays local to this device, and
+   the bar says which of the two you're getting. */
+let termsShared=false;
+function syncWarId(){
+  if(!war) return null;
+  return war.custom ? (cfg.syncTest? "test" : null) : war.warId;
+}
+async function fetchTerms(){
+  const id=syncWarId();
+  if(!cfg.syncUrl || !id) return false;
+  try{
+    const u=cfg.syncUrl.replace(/\/+$/,"")+"/terms?war="+encodeURIComponent(id)
+          + (cfg.syncTok? "&token="+encodeURIComponent(cfg.syncTok):"");
+    const j=await (await fetch(u)).json();
+    if(j.error) throw new Error(j.error);
+    termsShared = !!j.terms;
+    if((j.terms||null) !== (war.terms||null)){
+      war.terms = j.terms || null; save(LS.war,war);
+      renderTerms(); return true;
+    }
+    renderTerms();
+  }catch(e){ /* leave local value alone if the worker is unreachable */ }
+  return false;
+}
+async function pushTerms(ts){
+  const id=syncWarId();
+  if(!cfg.syncUrl || !id) return false;
+  try{
+    const u=cfg.syncUrl.replace(/\/+$/,"")+"/terms?war="+encodeURIComponent(id)+"&set="+(ts||0)
+          + (cfg.syncTok? "&token="+encodeURIComponent(cfg.syncTok):"");
+    const j=await (await fetch(u)).json();
+    if(j.error) throw new Error(j.error);
+    termsShared = !!ts;
+    renderTerms();
+    return true;
+  }catch(e){
+    $("termsHint").hidden=false;
+    $("termsHint").textContent="Set here, but the worker didn't accept it — it won't carry to anyone else. "+e.message;
+    return false;
+  }
+}
 function renderTerms(){
   const set = !!(war && war.terms);
   $("termsEdit").hidden = set;
@@ -915,12 +958,16 @@ function renderTerms(){
     $("termsWhen").textContent = fmtDT(war.terms)+" TCT";
     $("termsInput").value = tsToLocalInput(war.terms);
   }
+  $("termsScope").textContent = !cfg.syncUrl
+    ? "— on this device only, no worker connected"
+    : (termsShared? "— locked in for everyone" : "— the ledger splits before / after this");
 }
 function applyTerms(ts, note){
   war.terms = ts; save(LS.war,war);
   $("termsHint").hidden = !note;
   if(note) $("termsHint").innerHTML = note;
   renderTerms(); renderAll();
+  pushTerms(ts);
 }
 $("termsSet").onclick=()=>{
   const v=$("termsInput").value;
@@ -938,7 +985,7 @@ $("termsFromStart").onclick=()=>{
   applyTerms(war.start, "Terms set to the war start — the whole war counts as post-terms, so the ledger shows no pre/post split.");
 };
 $("termsNow").onclick=()=>{ applyTerms(now(), "") };
-$("termsClear").onclick=()=>{ war.terms=null; save(LS.war,war); $("termsInput").value=""; $("termsHint").hidden=true; renderTerms(); renderAll() };
+$("termsClear").onclick=()=>{ war.terms=null; save(LS.war,war); $("termsInput").value=""; $("termsHint").hidden=true; termsShared=false; renderTerms(); renderAll(); pushTerms(0) };
 
 
 /* ---------- rendering ---------- */
