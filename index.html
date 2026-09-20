@@ -243,16 +243,27 @@ details.settings summary{cursor:pointer}
 
 <!-- WAR PICK -->
 <section id="warpick" class="card" hidden>
-  <h2>War window</h2>
-  <div class="row">
+  <div class="scrubhead">
+    <h2 style="margin:0">Recent wars</h2>
+    <div class="meta" id="warPickMeta"></div>
+  </div>
+  <div class="tblwrap">
+    <table id="wartbl" style="min-width:600px">
+      <thead><tr><th style="text-align:left">Opponent</th><th style="text-align:left">When</th><th>Us</th><th>Them</th><th style="text-align:left">Result</th><th></th></tr></thead>
+      <tbody id="wartblBody"></tbody>
+    </table>
+  </div>
+  <div class="zoomrow" style="margin-top:10px">
+    <span class="lbl">Older wars</span>
     <select id="warSel"></select>
-    <button id="applyWar" class="primary">Track this war</button>
+    <button id="applyWar">Track this</button>
     <button id="resumeWar" class="ghost" hidden>Continue tracking ⟶</button>
   </div>
-  <div class="row">
+  <div class="zoomrow" id="customRow" hidden>
+    <span class="lbl">Custom window</span>
     <label class="inl">Start <input type="datetime-local" id="cStart"></label>
     <label class="inl">End <input type="datetime-local" id="cEnd"></label>
-    <span class="meta">(custom window — used if "Custom" is selected; leave end blank for ongoing)</span>
+    <span class="meta">leave end blank for ongoing</span>
   </div>
 </section>
 
@@ -486,7 +497,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:32</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:43</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -577,33 +588,71 @@ $("connectBtn").onclick = async ()=>{
   $("connectBtn").disabled = false; $("connectBtn").textContent="Connect";
 };
 
-async function loadWarList(){
-  const sel = $("warSel"); sel.innerHTML="";
-  let list=[];
-  try{
-    const rw = await api("/faction/rankedwars");
-    list = (rw.rankedwars||rw.wars||[]).map(normWar).filter(Boolean)
-           .sort((a,b)=>b.start-a.start).slice(0,12);
-  }catch(e){ /* rankedwars may 404 for some keys; custom still works */ }
-  for(const w of list){
+let warList=[];
+function warOutcome(w){
+  if(!w.end) return {label:"live", cls:"pos"};
+  if(w.end>now()) return {label:"scheduled", cls:"meta"};
+  if(w.usScore==null||w.themScore==null) return {label:"finished", cls:"meta"};
+  if(w.usScore===w.themScore) return {label:"draw", cls:"meta"};
+  return w.usScore>w.themScore? {label:"won", cls:"pos"} : {label:"lost", cls:"neg"};
+}
+function renderWarList(){
+  const top=warList.slice(0,5);
+  $("warPickMeta").textContent = warList.length? `${warList.length} on record` : "";
+  $("wartblBody").innerHTML = top.length? top.map((w,i)=>{
+    const o=warOutcome(w);
+    const when = fmtDate(w.start)+(w.end? " → "+fmtDate(w.end) : "");
+    return `<tr><td style="text-align:left" class="name" data-wi="${i}">${esc(w.oppName)}</td>`
+      + `<td style="text-align:left" class="meta">${when}</td>`
+      + `<td class="${w.usScore!=null?"pos":"zero"}">${w.usScore!=null? fmtNum(w.usScore):"–"}</td>`
+      + `<td class="${w.themScore!=null?"neg":"zero"}">${w.themScore!=null? fmtNum(w.themScore):"–"}</td>`
+      + `<td style="text-align:left" class="${o.cls}">${o.label}</td>`
+      + `<td><button data-wi="${i}" class="trackWar">Track</button></td></tr>`;
+  }).join("") : `<tr><td colspan="6" class="meta">No ranked wars found for your faction.</td></tr>`;
+  // the dropdown carries everything older than the five listed, plus custom
+  const sel=$("warSel"); sel.innerHTML="";
+  for(const w of warList.slice(5)){
     const o=document.createElement("option");
-    const status = !w.end ? "LIVE" : (w.end> now() ? "scheduled" : fmtDate(w.end));
-    o.value = "rw:"+w.id;
-    o.textContent = `${w.oppName}  —  ${fmtDate(w.start)}  (${status})`;
-    o.dataset.w = JSON.stringify(w);
-    sel.appendChild(o);
+    const status = !w.end? "LIVE" : (w.end>now()? "scheduled" : fmtDate(w.end));
+    o.value="rw:"+w.id; o.textContent=`${w.oppName}  —  ${fmtDate(w.start)}  (${status})`;
+    o.dataset.w=JSON.stringify(w); sel.appendChild(o);
   }
   const oc=document.createElement("option"); oc.value="custom"; oc.textContent="Custom window (event / raid / practice)";
   sel.appendChild(oc);
+  syncCustomRow();
 }
+function syncCustomRow(){ $("customRow").hidden = $("warSel").value!=="custom" }
+function trackWar(w){
+  war = {facId:cfg.facId, facName:cfg.facName, warId:w.id, oppId:w.oppId, oppName:w.oppName,
+         start:w.start, end:w.end||0, terms:null, target:w.target};
+  save(LS.war, war);
+  attacks = load(LS.atk(war.warId))||[]; attackIds = new Set(attacks.map(a=>a.id));
+  snaps = load(LS.snap(war.warId))||[];
+  rebuildStatusFromSnaps();
+  startTracking();
+}
+async function loadWarList(){
+  try{
+    const rw = await api("/faction/rankedwars");
+    warList = (rw.rankedwars||rw.wars||[]).map(normWar).filter(Boolean).sort((a,b)=>b.start-a.start);
+  }catch(e){ warList=[] }   // rankedwars may 404 for some keys; custom still works
+  renderWarList();
+}
+$("wartblBody").addEventListener("click",e=>{
+  const el=e.target.closest("[data-wi]"); if(!el) return;
+  const w=warList[+el.dataset.wi]; if(w) trackWar(w);
+});
+$("warSel").addEventListener("change", syncCustomRow);
 
 function normWar(w){
   if(!w) return null;
   const start = w.start ?? w.war?.start, end = (w.end ?? w.war?.end) || 0;
   const facs = w.factions || [];
   let opp = facs.find(f=> (f.id||f.faction_id) != cfg.facId) || {};
+  let us = facs.find(f=> (f.id||f.faction_id) == cfg.facId) || {};
   return { id: w.id ?? w.war_id ?? start, start, end: end||0,
     target: w.target ?? w.war?.target ?? null,
+    usScore: us.score ?? null, themScore: opp.score ?? null,
     oppId: opp.id ?? opp.faction_id, oppName: opp.name || ("Faction "+(opp.id||"?")) };
 }
 
@@ -616,8 +665,7 @@ $("applyWar").onclick = ()=>{
     war = {facId:cfg.facId, facName:cfg.facName, warId:"custom"+s, oppId:null, oppName:"(all opponents)", start:s, end:e, terms:null, custom:true};
   }else{
     const opt = sel.selectedOptions[0]; if(!opt||!opt.dataset.w){ showErr("Pick a war first."); return }
-    const w = JSON.parse(opt.dataset.w);
-    war = {facId:cfg.facId, facName:cfg.facName, warId:w.id, oppId:w.oppId, oppName:w.oppName, start:w.start, end:w.end||0, terms:null, target:w.target};
+    trackWar(JSON.parse(opt.dataset.w)); return;
   }
   save(LS.war, war);
   attacks = load(LS.atk(war.warId))||[]; attackIds = new Set(attacks.map(a=>a.id));
@@ -960,7 +1008,7 @@ function renderTerms(){
   }
   $("termsScope").textContent = !cfg.syncUrl
     ? "— on this device only, no worker connected"
-    : (termsShared? "— locked in for everyone" : "— the ledger splits before / after this");
+    : (termsShared? "— set for everyone" : "— the ledger splits before / after this");
 }
 function applyTerms(ts, note){
   war.terms = ts; save(LS.war,war);
