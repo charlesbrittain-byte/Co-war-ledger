@@ -123,6 +123,7 @@ th,td{padding:6px 10px; text-align:right; border-bottom:1px solid var(--line); w
 th{color:var(--faint); font-weight:700; font-size:12.5px; letter-spacing:.06em; text-transform:uppercase;
   cursor:pointer; user-select:none; position:sticky; top:0; background:#181C21; white-space:nowrap}
 th.sorted{color:var(--amber)}
+.mobonly{display:none}
 .sortsub{cursor:pointer}
 .sortsub:hover{color:var(--text)}
 .sortsub.on{color:var(--amber); font-weight:700}
@@ -190,6 +191,55 @@ details.settings summary{cursor:pointer}
   .wrap{padding:0 11px}
   h2{font-size:14px}
   .tl-name{width:92px; min-width:92px}
+  /* Phones: let tables fit the screen instead of scrolling sideways. Minimum
+     widths come off, spacing tightens, and the columns that answer the least
+     are dropped — the data is all still there on a wider screen. */
+  table, #hmtbl, #hatbl, #artbl, #wartbl, #qtbl, #mtbl, #mdtbl{min-width:0 !important}
+  table{font-size:14.5px}
+  th,td{padding:5px 5px}
+  /* headers wrap instead of forcing the table wider than the screen */
+  th{font-size:11px; letter-spacing:.02em; white-space:normal; word-break:break-word; line-height:1.15}
+  td{white-space:nowrap}
+  td.name{font-size:14.5px}
+  .tblwrap{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  /* member ledger: keep who, hits, respect won, hits taken, net */
+  .c-as, .c-rl, .c-lastHit{display:none}
+  /* faction form: keep who, wars, hits, respect won, hits taken, net */
+  .h-lvl, .h-as, .h-rl, .h-ff{display:none}
+  /* armoury: keep the items that actually get discussed */
+  .a-other{display:none}
+  /* med-out board: Level, Runs and Paired with are the extras */
+  #mdtbl th:nth-child(2), #mdtbl td:nth-child(2),
+  #mdtbl th:nth-child(5), #mdtbl td:nth-child(5),
+  #mdtbl th:nth-child(6), #mdtbl td:nth-child(6){display:none}
+  /* hit quality: drop average respect per hit and average target level */
+  #qtbl th:nth-child(3), #qtbl td:nth-child(3),
+  #qtbl th:nth-child(5), #qtbl td:nth-child(5){display:none}
+  /* in-war armoury: keep xanax and the first aid kits, drop the long tail */
+  .w-morph, .w-blood, .w-other, .w-pts, .w-refill{display:none}
+  /* war overview: dates move under the opponent, and the Track button goes —
+     the name itself opens the war */
+  .mobonly{display:block}
+  #wartbl th:nth-child(2), #wartbl td:nth-child(2),
+  #wartbl th:nth-child(6), #wartbl td:nth-child(6){display:none}
+  #wartbl td.name{max-width:none; white-space:normal}
+  /* long names get an ellipsis rather than forcing the table wider */
+  td.name{max-width:104px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  /* member popup: drop assists and average fair fight */
+  #mtbl th:nth-child(3), #mtbl td:nth-child(3),
+  #mtbl th:nth-child(8), #mtbl td:nth-child(8){display:none}
+  .modal{max-width:100%}
+  .wb-tab{font-size:15px; padding:9px 10px}
+  .zoomrow{padding:6px 7px; gap:5px}
+  .zoomrow button{padding:4px 9px; font-size:13.5px}
+  .legend{font-size:12.5px}
+  .legend span{padding:2px 8px 2px 7px}
+}
+@media (max-width:430px){
+  /* narrowest phones: keep the live status chip, since mid-war "who is in
+     hospital" beats a respect total you can read later */
+  .c-rg{display:none}
+  .h-ag{display:none}
 }
 @media (prefers-reduced-motion:reduce){ *{transition:none!important; animation:none!important} }
 </style>
@@ -457,7 +507,7 @@ details.settings summary{cursor:pointer}
   </div>
   <div class="tblwrap" style="margin-top:10px">
     <table id="artbl" style="min-width:920px">
-      <thead><tr><th style="text-align:left">Member</th><th>Xanax before war</th><th>Xanax in war</th><th>Small FAK</th><th>First aid</th><th>Morphine</th><th>Blood bags</th><th>Other</th><th>Faction points given</th><th>Refills</th></tr></thead>
+      <thead><tr><th style="text-align:left" class="w-name">Member</th><th class="w-pre">Xanax before war</th><th class="w-war">Xanax in war</th><th class="w-sfak">Small FAK</th><th class="w-fak">First aid</th><th class="w-morph">Morphine</th><th class="w-blood">Blood bags</th><th class="w-other">Other</th><th class="w-pts">Faction points given</th><th class="w-refill">Refills</th></tr></thead>
       <tbody id="artblBody"></tbody>
       <tfoot><tr id="artblFoot"></tr></tfoot>
     </table>
@@ -502,7 +552,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 15:10</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 15:16</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -607,7 +657,7 @@ function renderWarList(){
   $("wartblBody").innerHTML = top.length? top.map((w,i)=>{
     const o=warOutcome(w);
     const when = fmtDate(w.start)+(w.end? " → "+fmtDate(w.end) : "");
-    return `<tr><td style="text-align:left" class="name" data-wi="${i}">${esc(w.oppName)}</td>`
+    return `<tr><td style="text-align:left" class="name" data-wi="${i}">${esc(w.oppName)}<div class="sub mobonly">${when}</div></td>`
       + `<td style="text-align:left" class="meta">${when}</td>`
       + `<td class="${w.usScore!=null?"pos":"zero"}">${w.usScore!=null? fmtNum(w.usScore):"–"}</td>`
       + `<td class="${w.themScore!=null?"neg":"zero"}">${w.themScore!=null? fmtNum(w.themScore):"–"}</td>`
@@ -1215,7 +1265,7 @@ function renderTable(){
     const sub = splitK
       ? `<div class="sub"><span data-k="${k}1" class="sortsub${sortKey===k+"1"?" on":""}">pre</span> · <span data-k="${k}2" class="sortsub${sortKey===k+"2"?" on":""}">post</span></div>`
       : "";
-    hh+=`<th data-k="${k}"${on?' class="sorted"':''}>${label}${sub}</th>`;
+    hh+=`<th data-k="${k}" class="c-${k}${on?' sorted':''}">${label}${sub}</th>`;
   }
   $("tblHead").innerHTML=hh;
   $("tblHead").onclick=e=>{
@@ -1228,18 +1278,18 @@ function renderTable(){
   for(const r of rows){
     tot.of1+=r.of1;tot.of2+=r.of2;tot.ag1+=r.ag1;tot.ag2+=r.ag2;tot.rg+=r.rg;tot.rl+=r.rl;tot.as+=r.as;
     body+=`<tr>
-      <td class="name" data-mid="${r.id}">${esc(r.name)}</td>
-      <td>${statusCell(r.id)}</td>
-      <td class="prepost">${pp(r.of1,r.of2,split)}</td>
-      <td class="${r.as?'':'zero'}">${r.as}</td>
-      <td class="pos">${r.rg?fmtR(r.rg):'<span class="zero">0</span>'}</td>
-      <td class="prepost">${pp(r.ag1,r.ag2,split,true)}</td>
-      <td class="${r.rl?'neg':'zero'}">${fmtR(r.rl)}</td>
-      <td class="${r.net>0?'pos':r.net<0?'neg':'zero'}"><b>${fmtR(r.net)}</b></td>
-      <td class="meta">${r.lastHit?ago(r.lastHit):"–"}</td></tr>`;
+      <td class="name c-name" data-mid="${r.id}">${esc(r.name)}</td>
+      <td class="c-status">${statusCell(r.id)}</td>
+      <td class="prepost c-of">${pp(r.of1,r.of2,split)}</td>
+      <td class="c-as ${r.as?'':'zero'}">${r.as}</td>
+      <td class="pos c-rg">${r.rg?fmtR(r.rg):'<span class="zero">0</span>'}</td>
+      <td class="prepost c-ag">${pp(r.ag1,r.ag2,split,true)}</td>
+      <td class="c-rl ${r.rl?'neg':'zero'}">${fmtR(r.rl)}</td>
+      <td class="c-net ${r.net>0?'pos':r.net<0?'neg':'zero'}"><b>${fmtR(r.net)}</b></td>
+      <td class="meta c-lastHit">${r.lastHit?ago(r.lastHit):"–"}</td></tr>`;
   }
   $("tblBody").innerHTML=body || `<tr><td colspan="9" class="meta">No war hits logged yet — they'll appear as the attack log syncs.</td></tr>`;
-  $("tblFoot").innerHTML=`<td>Total</td><td></td><td>${pp(tot.of1,tot.of2,split)}</td><td>${tot.as}</td><td class="pos">${fmtR(tot.rg)}</td><td>${pp(tot.ag1,tot.ag2,split,true)}</td><td class="neg">${fmtR(tot.rl)}</td><td class="${tot.rg-tot.rl>=0?'pos':'neg'}"><b>${fmtR(tot.rg-tot.rl)}</b></td><td></td>`;
+  $("tblFoot").innerHTML=`<td class="c-name">Total</td><td class="c-status"></td><td class="c-of">${pp(tot.of1,tot.of2,split)}</td><td class="c-as">${tot.as}</td><td class="pos c-rg">${fmtR(tot.rg)}</td><td class="c-ag">${pp(tot.ag1,tot.ag2,split,true)}</td><td class="neg c-rl">${fmtR(tot.rl)}</td><td class="c-net ${tot.rg-tot.rl>=0?'pos':'neg'}"><b>${fmtR(tot.rg-tot.rl)}</b></td><td class="c-lastHit"></td>`;
   $("attackMeta").textContent = attacks.filter(isWarAtk).length+" war hits logged · attack log syncs every "+cfg.pAtk+"s";
 }
 function pp(a,b,split,bad){ if(!split) return String(a+b||0);
@@ -1649,7 +1699,7 @@ async function loadHome(){
 }
 function renderHome(){
   $("hmHead").innerHTML=HOME_COLS.map(c=>
-    `<th data-k="${c.k}" class="${homeSort.k===c.k?"sorted":""}" style="${c.left?"text-align:left":""}">${c.label}</th>`).join("");
+    `<th data-k="${c.k}" class="h-${c.k}${homeSort.k===c.k?" sorted":""}" style="${c.left?"text-align:left":""}">${c.label}</th>`).join("");
   if(!homeRows){
     $("hmtblBody").innerHTML=`<tr><td colspan="${HOME_COLS.length}" class="meta">Press Load to pull recent war logs.</td></tr>`;
     $("hmtblFoot").innerHTML=""; $("homeMeta").textContent=""; return;
@@ -1660,20 +1710,20 @@ function renderHome(){
   });
   $("homeMeta").textContent=`last ${homeRows.wars} war${homeRows.wars===1?"":"s"} · loaded ${ago(homeRows.at)}`;
   $("hmtblBody").innerHTML=rows.map(r=>"<tr>"+HOME_COLS.map(c=>{
-    if(c.k==="name") return `<td style="text-align:left" class="name" data-mid="${r.id}">${esc(r.name)}</td>`;
+    if(c.k==="name") return `<td style="text-align:left" class="name h-name" data-mid="${r.id}">${esc(r.name)}</td>`;
     const v=r[c.k], txt=c.fmt? c.fmt(v) : (v||(v===0?"0":"–"));
     let cls=c.cls||"";
     if(c.k==="net") cls=v>0?"pos":v<0?"neg":"zero";
     if(!v && c.k!=="net") cls="zero";
-    return `<td class="${cls}">${txt}</td>`;
+    return `<td class="h-${c.k} ${cls}">${txt}</td>`;
   }).join("")+"</tr>").join("");
   const S=k=>rows.reduce((x,r)=>x+(r[k]||0),0);
   const tn=S("rg")-S("rl"), ffN=S("ffN");
-  $("hmtblFoot").innerHTML=`<td style="text-align:left">Total</td><td class="lvl">––</td><td></td>`
-    + `<td>${S("of")}</td><td>${S("as")}</td><td class="pos">${fmtR(S("rg"))}</td>`
-    + `<td>${S("ag")}</td><td class="neg">${fmtR(S("rl"))}</td>`
-    + `<td class="${tn>=0?"pos":"neg"}"><b>${fmtR(tn)}</b></td>`
-    + `<td>${ffN? (S("ffS")/ffN).toFixed(2):"–"}</td>`;
+  $("hmtblFoot").innerHTML=`<td style="text-align:left" class="h-name">Total</td><td class="lvl h-lvl">––</td><td class="h-wars"></td>`
+    + `<td class="h-of">${S("of")}</td><td class="h-as">${S("as")}</td><td class="pos h-rg">${fmtR(S("rg"))}</td>`
+    + `<td class="h-ag">${S("ag")}</td><td class="neg h-rl">${fmtR(S("rl"))}</td>`
+    + `<td class="h-net ${tn>=0?"pos":"neg"}"><b>${fmtR(tn)}</b></td>`
+    + `<td class="h-ff">${ffN? (S("ffS")/ffN).toFixed(2):"–"}</td>`;
 }
 $("homeLoad").onclick=loadHome;
 $("homeN").onchange=()=>{ if(homeRows) loadHome() };
@@ -1795,13 +1845,13 @@ function renderHomeArm(){
     : `<p class="meta">Nothing taken from the armoury in this period.</p>`;
   $("homeArmMeta").textContent=`${fmtDate(from)} → ${fmtDate(to)} · ${evs.length} event${evs.length===1?"":"s"} · loaded ${ago(homeArm.at)}`;
   $("haHead").innerHTML=HARM_COLS.map(c=>
-    `<th data-k="${c.k}" class="${haSort.k===c.k?"sorted":""}" style="${c.left?"text-align:left":""}">${c.label}</th>`).join("");
-  const cell=(v,css)=>`<td class="${v?"":"zero"}" style="${v?`color:var(${css})`:""}">${v||"–"}</td>`;
-  $("hatblBody").innerHTML=rows.map(r=>`<tr><td style="text-align:left" class="name">${esc(r.name)}</td>`
-    + HARM_COLS.slice(1).map(c=>cell(r[c.k], c.css)).join("")+`</tr>`).join("");
+    `<th data-k="${c.k}" class="a-${c.k}${haSort.k===c.k?" sorted":""}" style="${c.left?"text-align:left":""}">${c.label}</th>`).join("");
+  const cell=(v,css,k)=>`<td class="a-${k} ${v?"":"zero"}" style="${v?`color:var(${css})`:""}">${v||"–"}</td>`;
+  $("hatblBody").innerHTML=rows.map(r=>`<tr><td style="text-align:left" class="name a-name">${esc(r.name)}</td>`
+    + HARM_COLS.slice(1).map(c=>cell(r[c.k], c.css, c.k)).join("")+`</tr>`).join("");
   const S=k=>rows.reduce((x,r)=>x+(r[k]||0),0);
-  $("hatblFoot").innerHTML=`<td style="text-align:left">Total</td>`
-    + HARM_COLS.slice(1).map(c=>`<td>${S(c.k)}</td>`).join("");
+  $("hatblFoot").innerHTML=`<td style="text-align:left" class="a-name">Total</td>`
+    + HARM_COLS.slice(1).map(c=>`<td class="a-${c.k}">${S(c.k)}</td>`).join("");
 }
 $("haHead").addEventListener("click",e=>{
   const th=e.target.closest("th[data-k]"); if(!th) return;
