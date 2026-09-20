@@ -19,6 +19,8 @@
   --tl-ok:#2E4633; --tl-ehosp:#7A3336; --tl-shosp:#8A6420; --tl-travel:#2F4A5C; --tl-other:#3A3F46;
 }
 *{box-sizing:border-box; margin:0; padding:0}
+/* a class that sets display (.row is flex) otherwise beats the UA [hidden] rule */
+[hidden]{display:none !important}
 html{-webkit-text-size-adjust:100%}
 body{
   background:var(--bg); color:var(--text);
@@ -103,6 +105,9 @@ label.inl{color:var(--dim); font-size:14px; display:flex; align-items:center; ga
 /* zoom controls (shared by the timeline and the turtle board) */
 .zoomrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px}
 .zoomrow{background:#181C21; border:1px solid var(--line); border-radius:8px; padding:7px 9px}
+.termsbar{background:#181C21; border:1px solid var(--line); border-radius:8px; padding:7px 9px; margin-top:7px}
+.termsbar .lbl{color:var(--faint); font-size:13px; letter-spacing:.03em}
+.termsbar .gap{flex:1}
 .zoomrow .lbl{color:var(--faint); font-size:13px; letter-spacing:.03em; margin-right:2px}
 .zoomrow button{padding:4px 11px; font-size:14px; border-radius:6px}
 .zoomrow button.on{background:var(--amber); border-color:var(--amber); color:#1A1408; font-weight:600}
@@ -288,19 +293,6 @@ details.settings summary{cursor:pointer}
   <p class="hint">Faction armoury only — items someone bought themselves never appear. Weekends are shaded, so a training weekend shows up as a burst of xanax against the grey. Each tick is the exact minute an item was taken; hover one to see what it was.</p>
 </section>
 
-<!-- TERMS -->
-<section id="termsCard" class="card" hidden>
-  <h2>Terms</h2>
-  <div class="row">
-    <label class="inl">Terms agreed at (TCT) <input type="datetime-local" id="termsInput"></label>
-    <button id="termsNow">Terms made now</button>
-    <button id="termsFromStart">Termed from start</button>
-    <button id="termsSuggest">Suggest from stats</button>
-    <button id="termsClear" class="ghost">clear</button>
-  </div>
-  <p class="hint" id="termsHint">Everything in the table splits into before / after this moment. "Suggest" looks for the point where incoming hits on your side jump sharply.</p>
-</section>
-
 <!-- SCRUB -->
 <section id="scrubCard" class="card" hidden>
   <div class="scrubhead">
@@ -325,6 +317,25 @@ details.settings summary{cursor:pointer}
     <button id="panL" title="Move the window earlier">◀</button>
     <button id="panR" title="Move the window later">▶</button>
   </div>
+  <div class="termsbar" id="termsBar">
+    <div id="termsEdit" class="row" style="gap:8px">
+      <span class="lbl">Terms</span>
+      <input type="datetime-local" id="termsInput">
+      <button id="termsSet" class="primary">Set</button>
+      <button id="termsNow">Now</button>
+      <button id="termsFromStart">From start</button>
+      <button id="termsSuggest">Suggest</button>
+    </div>
+    <div id="termsSetView" class="row" style="gap:8px" hidden>
+      <span class="lbl">Terms</span>
+      <b id="termsWhen" style="color:var(--amber)">–</b>
+      <span class="meta">— the ledger splits before / after this</span>
+      <span class="gap"></span>
+      <button id="termsEditBtn">Change</button>
+      <button id="termsClear" class="ghost">clear</button>
+    </div>
+  </div>
+  <p class="hint" id="termsHint" hidden></p>
   <p class="hint">Bars above the line: your hits landed (respect gained). Below: hits taken (respect lost). Drag the marker to replay the war — the table and turtle board follow it. Zoom narrows the window both this chart and the turtle board draw, so you can see individual hits; the arrows move that window through the war.</p>
 </section>
 
@@ -475,7 +486,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:13</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:20</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -743,7 +754,7 @@ async function pollScore(){
 /* ---------- polling loops ---------- */
 function startTracking(){
   $("warpick").hidden = true; $("homeCard").hidden = true; $("homeArmCard").hidden = true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=false;
+  for(const id of ["scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=false;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
   armoury = load(LS.arm(war.warId))||[]; armIds = new Set();
@@ -756,7 +767,7 @@ function startTracking(){
   if(cfg.tlTall){ $("tlRows").classList.add("tl-tall"); $("tlTall").className="on" }
   $("syncTest").checked = !!cfg.syncTest;
   if(cfg.syncUrl) fetchServerSnaps().then(c=>{ if(c) renderAll() });
-  if(war.terms) $("termsInput").value = tsToLocalInput(war.terms);
+  renderTerms();
   liveMode = true; scrubT = clampT(now());
   renderAll();              // draw cached data at once: a failing first poll
   schedule(); tick(true);   // used to leave the whole war page blank
@@ -883,19 +894,40 @@ $("termsSuggest").onclick = ()=>{
     else if(bOut){ pick=bOut; how="hits"; who="your outgoing hit rate jumps — looks like they opened up" }
   }
   if(!pick){
+    $("termsHint").hidden=false;
     $("termsHint").textContent = snaps.length
       ? "No clear break in either the hit rate or who was hiding — you may not have termed. Set it manually, or use Termed from start."
       : "No clear pattern break yet, and there are no status recordings for this war — the hit log alone is a weak signal. Set it manually, or use Termed from start.";
     return;
   }
-  war.terms=pick.ts; save(LS.war,war); $("termsInput").value=tsToLocalInput(pick.ts);
-  $("termsHint").innerHTML = `Suggested terms at <b>${fmtDT(pick.ts)}</b> TCT: ${who}. `
+  const note = `Suggested terms at <b>${fmtDT(pick.ts)}</b> TCT: ${who}. `
     + (how==="status"
        ? "Read from live status recordings, which is the stronger signal."
        : "Read from the hit log only — no status recordings cover this war, so treat it as a rough guess.")
-    + " Adjust the time if it's off.";
-  renderAll();
+    + " Use Change if it's off.";
+  applyTerms(pick.ts, note);
 };
+function renderTerms(){
+  const set = !!(war && war.terms);
+  $("termsEdit").hidden = set;
+  $("termsSetView").hidden = !set;
+  if(set){
+    $("termsWhen").textContent = fmtDT(war.terms)+" TCT";
+    $("termsInput").value = tsToLocalInput(war.terms);
+  }
+}
+function applyTerms(ts, note){
+  war.terms = ts; save(LS.war,war);
+  $("termsHint").hidden = !note;
+  if(note) $("termsHint").innerHTML = note;
+  renderTerms(); renderAll();
+}
+$("termsSet").onclick=()=>{
+  const v=$("termsInput").value;
+  if(!v){ $("termsHint").hidden=false; $("termsHint").textContent="Pick a date and time first, or use Now / From start / Suggest."; return }
+  applyTerms(Math.floor(new Date(v+"Z").getTime()/1000), "");
+};
+$("termsEditBtn").onclick=()=>{ $("termsEdit").hidden=false; $("termsSetView").hidden=true };
 $("resumeWar").onclick=()=>{
   if(!war) return;
   attacks=load(LS.atk(war.warId))||[]; attackIds=new Set(attacks.map(a=>a.id));
@@ -903,13 +935,11 @@ $("resumeWar").onclick=()=>{
   startTracking();
 };
 $("termsFromStart").onclick=()=>{
-  war.terms=war.start; save(LS.war,war); $("termsInput").value=tsToLocalInput(war.terms);
-  $("termsHint").textContent="Terms set to the war start — the whole war counts as post-terms, so the table shows no pre/post split.";
-  renderAll();
+  applyTerms(war.start, "Terms set to the war start — the whole war counts as post-terms, so the ledger shows no pre/post split.");
 };
-$("termsNow").onclick=()=>{ war.terms=now(); save(LS.war,war); $("termsInput").value=tsToLocalInput(war.terms); renderAll() };
-$("termsClear").onclick=()=>{ war.terms=null; save(LS.war,war); $("termsInput").value=""; renderAll() };
-$("termsInput").onchange=()=>{ const v=$("termsInput").value; war.terms = v? Math.floor(new Date(v+"Z").getTime()/1000):null; save(LS.war,war); renderAll() };
+$("termsNow").onclick=()=>{ applyTerms(now(), "") };
+$("termsClear").onclick=()=>{ war.terms=null; save(LS.war,war); $("termsInput").value=""; $("termsHint").hidden=true; renderTerms(); renderAll() };
+
 
 /* ---------- rendering ---------- */
 const COLS=[
@@ -1697,7 +1727,7 @@ $("switchWar").onclick = async ()=>{
   // this war" — the picker's Continue button needs it to still be there.
   const wasTracking = war;
   liveMode=true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=true;
+  for(const id of ["scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=true;
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
   $("pollmeta").textContent="dashboard"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
