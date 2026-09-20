@@ -268,6 +268,28 @@ details.settings summary{cursor:pointer}
   <p class="hint" id="enemyHint">A med-out is logged when an enemy leaves hospital well before their timer — meds or a revive. Attackable players sort to the top; hospital exits show a countdown. Sampled while the page is open.</p>
 </section>
 
+<!-- MED-OUT DETECTOR (from the hit log) -->
+<section id="medCard" class="card" hidden>
+  <div class="scrubhead">
+    <h2 style="margin:0">Med-out detector — rebuilt from the hit log</h2>
+    <div class="meta" id="medCount"></div>
+  </div>
+  <div class="zoomrow">
+    <span class="lbl">Flag a return within</span>
+    <input type="range" id="medWin" min="120" max="2400" step="60" style="width:180px">
+    <span id="medWinLbl" style="color:var(--amber); font-weight:600; min-width:68px"></span>
+    <span class="gap"></span>
+    <label class="inl"><input type="checkbox" id="medMug" style="width:auto"> count mugs as hospitalising</label>
+  </div>
+  <div class="tblwrap">
+    <table id="mdtbl" style="min-width:620px">
+      <thead><tr><th style="text-align:left">Player</th><th style="text-align:left">Side</th><th>Suspected med-outs</th><th>Fastest return</th><th style="text-align:left">When</th></tr></thead>
+      <tbody id="mdtblBody"></tbody>
+    </table>
+  </div>
+  <p class="hint" id="medHint"></p>
+</section>
+
 <!-- RETAL WATCH -->
 <section id="retalCard" class="card" hidden>
   <h2>Retal watch</h2>
@@ -340,7 +362,7 @@ const LS = {
   atk:id=>"twl_atk_"+id, snap:id=>"twl_snap_"+id,
   esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id
 };
-let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60};
+let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60, medWin:600, medMug:true};
 let war = load(LS.war) || null;   // {facId,facName,warId,oppId,oppName,start,end,terms,label,custom}
 let attacks = [];                  // normalised, sorted by t
 let attackIds = new Set();
@@ -576,7 +598,7 @@ async function pollScore(){
 /* ---------- polling loops ---------- */
 function startTracking(){
   $("warpick").hidden = true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","retalCard","qualityCard"]) $(id).hidden=false;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","retalCard","qualityCard"]) $(id).hidden=false;
   $("enemyCard").hidden = !war.oppId;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
@@ -693,7 +715,7 @@ const COLS=[
   ["net","Net",r=>r.net],
   ["lastHit","Last hit",r=>r.lastHit],
 ];
-function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderEnemy(); renderRetal(); renderQuality(); }
+function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderEnemy(); renderMedLog(); renderRetal(); renderQuality(); }
 
 function renderQuality(){
   const per={};
@@ -819,7 +841,7 @@ function setZoom(sec){
   if(!liveMode) viewEnd=scrubT;            // zoom around where you were looking
   const [v0,v1]=viewWin();
   scrubT=Math.min(Math.max(scrubT,v0),v1);
-  renderScrubOnly(); renderTable(); renderTimelines();
+  renderScrubOnly(); renderTable(); renderTimelines(); renderMedLog();
 }
 function panBy(dir){
   const [v0,v1]=viewWin(); const span=v1-v0, lo=war.start, hi=warHi();
@@ -827,7 +849,7 @@ function panBy(dir){
   let end=Math.min(hi, Math.max(lo+span, v1 + dir*span/2));
   liveMode = end>=hi;
   viewEnd=end; scrubT=end;
-  renderScrubOnly(); renderTable(); renderTimelines();
+  renderScrubOnly(); renderTable(); renderTimelines(); renderMedLog();
 }
 function syncZoomButtons(){
   const [v0,v1]=viewWin(); const lo=war.start, hi=warHi(), full=(v1-v0)>=(hi-lo);
@@ -874,7 +896,7 @@ function drawSpark(t0,t1){
 $("scrub").addEventListener("input",e=>{
   const [t0,t1]=viewWin();
   scrubT=t0+(t1-t0)*(+e.target.value/1000); liveMode=false; viewEnd=t1;
-  renderScrubOnly(); renderTable(); renderTimelines();
+  renderScrubOnly(); renderTable(); renderTimelines(); renderMedLog();
 });
 $("liveBtn").onclick=()=>{ liveMode=true; viewEnd=0; scrubT=clampT(now()); renderAll() };
 for(const row of ["zoomRow","tlZoomRow"]) $(row).addEventListener("click",e=>{
@@ -997,6 +1019,69 @@ function renderTimelines(){
     : `No live status was recorded for this period, so this is rebuilt from the attack log: ticks are hits made (top, green) and taken (bottom, red); faded red bands estimate hospital stays after being hospitalised. Self-hosps and flights can't be recovered for past wars — a quiet band with no red ticks pre-terms is your turtle.`;
 }
 
+/* ---------- med-out detection from the hit log ----------
+   You cannot attack someone who is in hospital, so every attack on a player is
+   proof they were out at that moment — even a failed one. If a hospitalising
+   hit is followed by another attack on the same player far sooner than a
+   hospital stay would allow, they medded or were revived. Unlike the worker's
+   live detection this works on wars that finished before the worker existed,
+   but it is inference: it cannot see the actual hospital timer, and meds and
+   revives look identical. MIN_REHIT drops near-simultaneous hits, which are
+   overlapping fights rather than an early exit. */
+const MIN_REHIT = 90;
+function hospResults(){
+  const s = new Set(["Hospitalized","Hospitalised"]);
+  if(cfg.medMug!==false) s.add("Mugged");
+  return s;
+}
+function computeLogMeds(uptoT){
+  const HOSP=hospResults(), win=cfg.medWin||600, evs=[];
+  const lastHosp={};                         // defender id -> when they were put in hospital
+  for(const a of attacks){
+    if(a.t>uptoT) break;
+    if(!isWarAtk(a) || !a.dId) continue;
+    const from=lastHosp[a.dId];
+    if(from){
+      const gap=a.t-from;
+      if(gap>=MIN_REHIT && gap<=win)
+        evs.push({id:a.dId, name:a.dName, fac:a.dFac, t:a.t, gap});
+    }
+    lastHosp[a.dId] = HOSP.has(a.res) ? a.t : null;
+  }
+  return evs;
+}
+function renderMedLog(){
+  const win=cfg.medWin||600;
+  $("medWin").value=win; $("medMug").checked=cfg.medMug!==false;
+  $("medWinLbl").textContent = win<3600? Math.round(win/60)+" min" : (win/3600).toFixed(1)+" h";
+  const evs=computeLogMeds(scrubT);
+  const per={};
+  for(const e of evs){
+    const p=per[e.id]||(per[e.id]={id:e.id,name:e.name,fac:e.fac,n:0,min:Infinity,ts:[]});
+    p.n++; p.min=Math.min(p.min,e.gap); p.ts.push(e.t);
+  }
+  const rows=Object.values(per).sort((a,b)=> b.n-a.n || a.min-b.min);
+  const them=rows.filter(r=>r.fac!=war.facId).reduce((s,r)=>s+r.n,0);
+  const us=rows.filter(r=>r.fac==war.facId).reduce((s,r)=>s+r.n,0);
+  $("medCount").textContent = rows.length? `${them} on their side · ${us} on ours` : "none found";
+  $("mdtblBody").innerHTML = rows.length
+    ? rows.map(r=>{
+        const when=r.ts.slice(0,4).map(t=>fmtDT(t)).join(", ")+(r.ts.length>4? ` +${r.ts.length-4} more`:"");
+        const mine=r.fac==war.facId;
+        return `<tr><td style="text-align:left" class="name">${esc(r.name||r.id)}</td>`
+             + `<td style="text-align:left" class="${mine?'pos':'neg'}">${mine?"ours":"theirs"}</td>`
+             + `<td>${r.n}</td><td>${Math.round(r.min/60)}m ${r.min%60}s</td>`
+             + `<td style="text-align:left" class="meta">${when}</td></tr>`;
+      }).join("")
+    : `<tr><td colspan="5" class="meta">No suspected med-outs in view. Widen the window, or there simply weren't any.</td></tr>`;
+  $("medHint").innerHTML = `A player was hospitalised, then attacked again within <b>${$("medWinLbl").textContent}</b> — far sooner than a hospital stay allows, so they medded or were revived. `
+    + `Hits less than ${MIN_REHIT}s apart are ignored as overlapping fights. This is inference from the attack log, so it covers past wars, but it can't tell meds from revives and a genuinely short stay on a low-level player can look the same. `
+    + `The worker's live detection (Enemy watch) is exact where it has data. `
+    + (cfg.medMug!==false? `Mugs are counted as hospitalising — untick that if mugs leave players attackable, as it would turn ordinary farming into phantom med-outs.` : `Only 'Hospitalized' results count as putting someone in hospital.`);
+}
+$("medWin").oninput=()=>{ cfg.medWin=+$("medWin").value; save(LS.cfg,cfg); renderMedLog() };
+$("medMug").onchange=()=>{ cfg.medMug=$("medMug").checked; save(LS.cfg,cfg); renderMedLog() };
+
 /* ---------- csv ---------- */
 $("csvBtn").onclick=()=>{
   const rows=aggregate(scrubT);
@@ -1022,7 +1107,7 @@ $("switchWar").onclick = async ()=>{
   attacks=[]; attackIds=new Set(); snaps=[]; lastStatus={}; memberDir={};
   enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null;
   liveMode=true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","enemyCard","retalCard","qualityCard"]) $(id).hidden=true;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","enemyCard","medCard","retalCard","qualityCard"]) $(id).hidden=true;
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
   $("pollmeta").textContent="pick a war"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
