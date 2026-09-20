@@ -6,6 +6,13 @@ compatibility_date = "2026-09-20"
 [triggers]
 crons = ["*/2 * * * *"]
 
+# Dry run with no war on: record against faction 35840 under war id "test",
+# every 4 minutes, until 2026-09-23 08:41 BST. Expires on its own; a real war
+# always takes priority. Set TEST_UNTIL = 0 to stop early.
+[vars]
+TEST_UNTIL = 1790149293
+TEST_OPP = 35840
+
 [[kv_namespaces]]
 binding = "LEDGER"
 id = "e2ec4e5d0e5a4d269ef1fb6e2234f6ce"

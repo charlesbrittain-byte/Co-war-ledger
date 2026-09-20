@@ -41,8 +41,16 @@ export default {
       return json({ ours: doc.ours, med: doc.med, since: doc.since, last: doc.last }, 200, cors);
     }
     if (url.pathname.endsWith("/status")) {
-      const meta = await env.LEDGER.get("meta", "json");
-      return json(meta || { note: "worker has not ticked yet — check the cron trigger" }, 200, cors);
+      const meta = (await env.LEDGER.get("meta", "json")) || { note: "worker has not ticked yet — check the cron trigger" };
+      const now = Math.floor(Date.now() / 1000);
+      const tw = testWindow(env, now);
+      if (tw) {
+        const doc = await env.LEDGER.get("war:test", "json");
+        meta.test = { recording: !meta.active, opp: tw.oppId, endsIn: tw.until - now,
+                      samples: doc ? doc.ours.length : 0, medOuts: doc ? doc.med.length : 0,
+                      last: doc ? doc.last : null, error: meta.testError || null };
+      } else if (+env.TEST_UNTIL) meta.test = { recording: false, note: "test window has expired" };
+      return json(meta, 200, cors);
     }
     return json({ ok: true, endpoints: ["/snaps?war=ID", "/status"] }, 200, cors);
   }
@@ -58,12 +66,24 @@ async function torn(env, path) {
   return j;
 }
 
+// Test mode: with no war on, record exactly what a war would record, against a
+// nominated faction, under war id "test". Set TEST_UNTIL (unix seconds) and
+// TEST_OPP (faction id) as plain vars in wrangler.toml; it stops on its own at
+// TEST_UNTIL. Records on every other tick (4 min) to stay well inside the free
+// KV tier's 1,000 writes/day, and yields immediately if a real war starts.
+function testWindow(env, t) {
+  const until = +env.TEST_UNTIL || 0;
+  if (!until || t >= until) return null;
+  return { warId: "test", oppId: +env.TEST_OPP || 0, start: 0, end: 0, test: true, until };
+}
+
 async function tick(env) {
   const t = Math.floor(Date.now() / 1000);
   let meta = (await env.LEDGER.get("meta", "json")) || {};
 
-  // Find the active (or imminent) ranked war; re-check every 10 min when idle.
-  if (!meta.active || (meta.activeCheckedAt || 0) < t - 600) {
+  // Find the active (or imminent) ranked war; re-check every 10 min.
+  // Time-based only: re-checking on every idle tick burned a KV write each time.
+  if ((meta.activeCheckedAt || 0) < t - 600) {
     try {
       if (!meta.facId) {
         const b = await torn(env, "/faction/basic");
@@ -90,12 +110,17 @@ async function tick(env) {
     }
   }
 
-  const act = meta.active;
-  if (!act || act.start > t) return;
-  if (act.end && t > act.end + 1800) { // war over (30 min grace)
+  let act = meta.active;
+  if (act && act.start > t) return;
+  if (act && act.end && t > act.end + 1800) { // war over (30 min grace)
     meta.active = null;
     await env.LEDGER.put("meta", JSON.stringify(meta));
-    return;
+    act = null;
+  }
+  if (!act) {                          // no real war — fall back to test mode if armed
+    act = testWindow(env, t);
+    if (!act) return;
+    if (Math.floor(t / 120) % 2) return;  // every other tick: 4 min, half the writes
   }
 
   const key = "war:" + act.warId;
@@ -135,8 +160,11 @@ async function tick(env) {
 
     doc.last = t;
     await env.LEDGER.put(key, JSON.stringify(doc));
+    if (act.test && meta.testError) { meta.testError = null; await env.LEDGER.put("meta", JSON.stringify(meta)); }
   } catch (e) {
-    meta.lastError = String(e.message || e); meta.lastTick = t;
+    // test errors get their own field: the 10-minute war re-check clears lastError
+    if (act.test) meta.testError = String(e.message || e); else meta.lastError = String(e.message || e);
+    meta.lastTick = t;
     await env.LEDGER.put("meta", JSON.stringify(meta));
   }
 }

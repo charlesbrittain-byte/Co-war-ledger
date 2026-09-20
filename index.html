@@ -11,6 +11,8 @@
   --bg:#14171B; --panel:#1C2025; --panel2:#22272D; --line:#2A2F36;
   --text:#CDD3D8; --dim:#8A939B; --faint:#5A626B;
   --up:#7FB069; --down:#D0555B; --amber:#D9A036; --steel:#5E8CA8;
+  /* brighter than --up/--down so hit ticks stay legible on the dark status bands */
+  --tick-out:#A6E06A; --tick-in:#FF7B82;
   --tl-ok:#2E4633; --tl-ehosp:#7A3336; --tl-shosp:#8A6420; --tl-travel:#2F4A5C; --tl-other:#3A3F46;
 }
 *{box-sizing:border-box; margin:0; padding:0}
@@ -66,6 +68,13 @@ label.inl{color:var(--dim); font-size:13px; display:flex; align-items:center; ga
 }
 .scrub input[type=range]::-moz-range-thumb{width:3px; height:96px; background:var(--amber); border:none; border-radius:0; cursor:ew-resize}
 .scrub-labels{display:flex; justify-content:space-between; color:var(--faint); font-size:12px; margin-top:2px}
+/* zoom controls (shared by the timeline and the turtle board) */
+.zoomrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px}
+.zoomrow .lbl{color:var(--faint); font-size:12px; margin-right:2px}
+.zoomrow button{padding:3px 9px; font-size:13px}
+.zoomrow button.on{background:var(--amber); border-color:var(--amber); color:#1A1408; font-weight:600}
+.zoomrow button[disabled]{opacity:.4; cursor:default}
+.zoomrow .gap{width:8px}
 .scrubhead{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px}
 .scrubtime{font-size:15px; font-weight:600}
 .scrubtime .t{color:var(--amber)}
@@ -92,12 +101,18 @@ td.name:hover{color:var(--amber)}
 .tl-row{display:flex; align-items:center; gap:10px; margin-bottom:3px}
 .tl-name{width:130px; min-width:130px; text-align:right; font-size:13px; color:var(--dim); overflow:hidden; text-overflow:ellipsis}
 .tl-band{flex:1; height:16px; background:var(--panel2); position:relative; border-radius:2px; overflow:hidden}
-.tl-seg{position:absolute; top:0; bottom:0}
-.tl-tick{position:absolute; width:2px}
-.tl-tick.out{top:0; height:55%; background:var(--up)}
-.tl-tick.in{bottom:0; height:55%; background:var(--down)}
-.tl-est{position:absolute; top:0; bottom:0; background:var(--tl-ehosp); opacity:.45}
-.tl-mark{position:absolute; top:0; bottom:0; width:2px; background:var(--amber); opacity:.9}
+/* hit ticks live in their own half: made above the midline, taken below, never overlapping */
+.tl-band::after{content:""; position:absolute; left:0; right:0; top:50%; height:1px; margin-top:-0.5px; background:rgba(10,12,14,.55); z-index:1; pointer-events:none}
+.tl-seg{position:absolute; top:0; bottom:0; z-index:0}
+.tl-tick{position:absolute; width:2px; z-index:2; box-shadow:0 0 0 1px rgba(10,12,14,.65)}
+.tl-tick.out{top:0; height:44%; background:var(--tick-out)}
+.tl-tick.in{bottom:0; height:44%; background:var(--tick-in)}
+.tl-est{position:absolute; top:0; bottom:0; background:var(--tl-ehosp); opacity:.45; z-index:0}
+.tl-mark{position:absolute; top:0; bottom:0; width:2px; background:var(--amber); opacity:.9; z-index:3}
+/* taller rows: same data, more room to read it */
+.tl-tall .tl-band{height:28px}
+.tl-tall .tl-row{margin-bottom:5px}
+.tl-tall .tl-tick{width:3px}
 .legend{display:flex; gap:14px; flex-wrap:wrap; color:var(--dim); font-size:13px; margin-top:10px}
 .legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px}
 .termsline{border-left:2px dashed var(--amber)}
@@ -175,7 +190,19 @@ details.settings summary{cursor:pointer}
     <input type="range" id="scrub" min="0" max="1000" value="1000" aria-label="Scrub through the war timeline">
   </div>
   <div class="scrub-labels"><span id="axL"></span><span id="axM"></span><span id="axR"></span></div>
-  <p class="hint">Bars above the line: your hits landed (respect gained). Below: hits taken (respect lost). Drag the marker to replay the war — the table and turtle board follow it.</p>
+  <div class="zoomrow" id="zoomRow">
+    <span class="lbl">Zoom</span>
+    <button data-zoom="0">Whole war</button>
+    <button data-zoom="86400">24h</button>
+    <button data-zoom="21600">6h</button>
+    <button data-zoom="7200">2h</button>
+    <button data-zoom="3600">1h</button>
+    <button data-zoom="1800">30m</button>
+    <span class="gap"></span>
+    <button id="panL" title="Move the window earlier">◀</button>
+    <button id="panR" title="Move the window later">▶</button>
+  </div>
+  <p class="hint">Bars above the line: your hits landed (respect gained). Below: hits taken (respect lost). Drag the marker to replay the war — the table and turtle board follow it. Zoom narrows the window both this chart and the turtle board draw, so you can see individual hits; the arrows move that window through the war.</p>
 </section>
 
 <!-- TABLE -->
@@ -196,7 +223,24 @@ details.settings summary{cursor:pointer}
 
 <!-- TURTLE BOARD -->
 <section id="tlCard" class="card" hidden>
-  <h2>Turtle board — where everyone's been</h2>
+  <div class="scrubhead">
+    <h2 style="margin:0">Turtle board — where everyone's been</h2>
+    <div class="meta" id="tlWindow"></div>
+  </div>
+  <div class="zoomrow" id="tlZoomRow">
+    <span class="lbl">Zoom</span>
+    <button data-zoom="0">Whole war</button>
+    <button data-zoom="86400">24h</button>
+    <button data-zoom="21600">6h</button>
+    <button data-zoom="7200">2h</button>
+    <button data-zoom="3600">1h</button>
+    <button data-zoom="1800">30m</button>
+    <span class="gap"></span>
+    <button id="tlPanL" title="Move the window earlier">◀</button>
+    <button id="tlPanR" title="Move the window later">▶</button>
+    <span class="gap"></span>
+    <button id="tlTall" title="Taller rows, easier to read">Taller rows</button>
+  </div>
   <div id="tlRows"></div>
   <div class="legend">
     <span><i style="background:var(--tl-ok)"></i>okay / attackable</span>
@@ -204,8 +248,8 @@ details.settings summary{cursor:pointer}
     <span><i style="background:var(--tl-shosp)"></i>self-hosp / other hosp</span>
     <span><i style="background:var(--tl-travel)"></i>travelling or abroad</span>
     <span><i style="background:var(--tl-other)"></i>jail / other</span>
-    <span><i style="background:var(--up);height:10px;width:3px"></i>hit made</span>
-    <span><i style="background:var(--down);height:10px;width:3px"></i>hit taken</span>
+    <span><i style="background:var(--tick-out);height:10px;width:3px"></i>hit made (upper half)</span>
+    <span><i style="background:var(--tick-in);height:10px;width:3px"></i>hit taken (lower half)</span>
     <span><i style="background:var(--tl-ehosp);opacity:.45"></i>est. hospital (past wars)</span>
     <span><i style="background:var(--amber)"></i>terms marker</span>
   </div>
@@ -261,6 +305,10 @@ details.settings summary{cursor:pointer}
       <label class="inl">Token <input id="syncTok" type="password" style="width:110px" autocomplete="off"></label>
       <button id="syncSave">Save sync</button>
     </div>
+    <div class="row">
+      <label class="inl"><input type="checkbox" id="syncTest" style="width:auto"> Read the worker's test recording</label>
+      <span class="meta">For a dry run with no war on: pick a Custom window above, and this reads what the worker is recording under war id "test".</span>
+    </div>
     <p class="hint" id="syncMeta">Cloud sync off — statuses only record while a page is open. A free Cloudflare worker can record 24/7 and share one dataset with the whole leadership.</p>
   </div>
 </details>
@@ -308,6 +356,8 @@ let timers = {atk:null,mem:null,scr:null};
 let paused = false;
 let liveMode = true;
 let scrubT = 0;
+let zoomSpan = 0;   // seconds of history shown by the charts; 0 = the whole war
+let viewEnd = 0;    // right-hand edge of that window when not live
 let sortKey = "net", sortDir = -1;
 let lastPollOk = null, lastErr = "";
 
@@ -534,6 +584,8 @@ function startTracking(){
   $("switchWar").hidden=false;
   $("pAtk").value=cfg.pAtk; $("pMem").value=cfg.pMem;
   $("syncUrl").value=cfg.syncUrl||""; $("syncTok").value=cfg.syncTok||"";
+  if(cfg.tlTall){ $("tlRows").classList.add("tl-tall"); $("tlTall").className="on" }
+  $("syncTest").checked = !!cfg.syncTest;
   if(cfg.syncUrl) fetchServerSnaps().then(c=>{ if(c) renderAll() });
   if(war.terms) $("termsInput").value = tsToLocalInput(war.terms);
   liveMode = true; scrubT = clampT(now());
@@ -748,20 +800,64 @@ function renderHeader(){
   v.innerHTML=s; updDot();
 }
 function clampT(t){ const hi = war.end&&war.end<now()? war.end : now(); return Math.min(Math.max(t,war.start),hi) }
+
+/* ---------- shared view window (timeline + turtle board) ----------
+   zoomSpan is how much time is visible (0 = the whole war); viewEnd is the
+   right-hand edge, which tracks "now" while live. The scrub marker moves
+   inside this window, so zooming in gives finer resolution on both charts. */
+const MIN_SPAN=300;
+function warHi(){ return war.end&&war.end<now()? war.end : now() }
+function viewWin(){
+  const lo=war.start, hi=Math.max(lo+MIN_SPAN, warHi());
+  const full=hi-lo;
+  const span=Math.min(Math.max(zoomSpan||full, MIN_SPAN), full);
+  let v1 = liveMode? hi : Math.min(hi, Math.max(lo+span, viewEnd||hi));
+  return [Math.max(lo, v1-span), v1];
+}
+function setZoom(sec){
+  zoomSpan=+sec||0;
+  if(!liveMode) viewEnd=scrubT;            // zoom around where you were looking
+  const [v0,v1]=viewWin();
+  scrubT=Math.min(Math.max(scrubT,v0),v1);
+  renderScrubOnly(); renderTable(); renderTimelines();
+}
+function panBy(dir){
+  const [v0,v1]=viewWin(); const span=v1-v0, lo=war.start, hi=warHi();
+  if(span>=hi-lo) return;                   // nothing to pan when fully zoomed out
+  let end=Math.min(hi, Math.max(lo+span, v1 + dir*span/2));
+  liveMode = end>=hi;
+  viewEnd=end; scrubT=end;
+  renderScrubOnly(); renderTable(); renderTimelines();
+}
+function syncZoomButtons(){
+  const [v0,v1]=viewWin(); const lo=war.start, hi=warHi(), full=(v1-v0)>=(hi-lo);
+  for(const row of ["zoomRow","tlZoomRow"]){
+    const r=$(row); if(!r) continue;
+    for(const b of r.querySelectorAll("button[data-zoom]"))
+      b.className = (+b.dataset.zoom===zoomSpan)? "on" : "";
+  }
+  for(const id of ["panL","tlPanL"]){ const b=$(id); if(b) b.disabled = full || v0<=lo }
+  for(const id of ["panR","tlPanR"]){ const b=$(id); if(b) b.disabled = full || v1>=hi }
+  const w=$("tlWindow");
+  if(w) w.textContent = full? "whole war" : fmtDT(v0)+" → "+fmtDT(v1)+" TCT";
+}
 function renderScrubOnly(){
-  const t0=war.start, t1=war.end&&war.end<now()?war.end:now();
+  const [t0,t1]=viewWin();
   const sc=$("scrub");
   sc.value = Math.round(1000*(scrubT-t0)/Math.max(1,(t1-t0)));
   $("scrubTimeLbl").textContent = liveMode? "now ("+fmtDT(scrubT)+" TCT)" : fmtDT(scrubT)+" TCT";
   $("liveBtn").className = liveMode? "primary":"";
-  $("axL").textContent=fmtDT(t0); $("axM").textContent=fmtDT(t0+(t1-t0)/2); $("axR").textContent= war.end&&war.end<=now()? fmtDT(t1):"now";
+  $("axL").textContent=fmtDT(t0); $("axM").textContent=fmtDT(t0+(t1-t0)/2); $("axR").textContent= (liveMode&&!(war.end&&war.end<=now()))? "now" : fmtDT(t1);
   drawSpark(t0,t1);
+  syncZoomButtons();
 }
 function drawSpark(t0,t1){
   const svg=$("spark"); const W=1000,H=96,mid=H*0.55; svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
-  const bin=Math.max(900,Math.ceil((t1-t0)/120)); const n=Math.max(1,Math.ceil((t1-t0)/bin));
+  // bin fine enough to show detail when zoomed in, coarse enough to stay readable across a whole war
+  const bin=Math.max(60,Math.ceil((t1-t0)/120)); const n=Math.max(1,Math.ceil((t1-t0)/bin));
   const up=new Array(n).fill(0), dn=new Array(n).fill(0);
-  for(const a of attacks){ if(!isWarAtk(a)) continue; const i=Math.min(n-1,Math.floor((a.t-t0)/bin)); if(i<0)continue;
+  for(const a of attacks){ if(!isWarAtk(a)) continue; if(a.t<t0||a.t>t1) continue;
+    const i=Math.min(n-1,Math.floor((a.t-t0)/bin));
     if(a.aFac==war.facId) up[i]+=a.rg; if(a.dFac==war.facId) dn[i]+=a.rl; }
   const mx=Math.max(1,...up,...dn); let p="";
   const bw=W/n;
@@ -776,11 +872,21 @@ function drawSpark(t0,t1){
   svg.innerHTML=p;
 }
 $("scrub").addEventListener("input",e=>{
-  const t0=war.start,t1=war.end&&war.end<now()?war.end:now();
-  scrubT=t0+(t1-t0)*(+e.target.value/1000); liveMode=false;
+  const [t0,t1]=viewWin();
+  scrubT=t0+(t1-t0)*(+e.target.value/1000); liveMode=false; viewEnd=t1;
   renderScrubOnly(); renderTable(); renderTimelines();
 });
-$("liveBtn").onclick=()=>{ liveMode=true; scrubT=clampT(now()); renderAll() };
+$("liveBtn").onclick=()=>{ liveMode=true; viewEnd=0; scrubT=clampT(now()); renderAll() };
+for(const row of ["zoomRow","tlZoomRow"]) $(row).addEventListener("click",e=>{
+  const b=e.target.closest("button[data-zoom]"); if(b) setZoom(b.dataset.zoom);
+});
+$("panL").onclick=$("tlPanL").onclick=()=>panBy(-1);
+$("panR").onclick=$("tlPanR").onclick=()=>panBy(1);
+$("tlTall").onclick=()=>{
+  const on=$("tlRows").classList.toggle("tl-tall");
+  $("tlTall").className = on? "on":"";
+  cfg.tlTall=on; save(LS.cfg,cfg);
+};
 
 function renderTable(){
   const rows=aggregate(scrubT);
@@ -830,8 +936,9 @@ function statusCell(id){
 function renderTimelines(){
   const el=$("tlRows");
   const t1=scrubT;
+  const [w0]=viewWin();
   const hasSnaps = snaps.length && snaps[0].t < t1;
-  const t0 = hasSnaps ? Math.max(war.start, snaps[0].t) : war.start;
+  const t0 = hasSnaps ? Math.max(w0, snaps[0].t) : w0;
   if(t1<=t0){ el.innerHTML=`<p class="meta">Nothing to show at this point of the timeline yet.</p>`; return }
   const span=t1-t0;
   const X=t=>100*(t-t0)/span;
@@ -1015,9 +1122,13 @@ $("tblBody").addEventListener("click",e=>{
 
 /* ---------- cloud sync (Cloudflare worker) ---------- */
 async function fetchServerSnaps(){
-  if(!cfg.syncUrl || !war || war.custom) return false;
+  if(!cfg.syncUrl || !war) return false;
+  // a custom window normally has no server-side counterpart; test mode is the exception,
+  // where the worker records under the fixed war id "test"
+  const warId = war.custom ? (cfg.syncTest? "test" : null) : war.warId;
+  if(!warId) return false;
   try{
-    const u = cfg.syncUrl.replace(/\/+$/,"") + "/snaps?war=" + encodeURIComponent(war.warId)
+    const u = cfg.syncUrl.replace(/\/+$/,"") + "/snaps?war=" + encodeURIComponent(warId)
             + (cfg.syncTok? "&token="+encodeURIComponent(cfg.syncTok) : "");
     const r = await fetch(u); const j = await r.json();
     if(j.error) throw new Error(j.error);
@@ -1049,6 +1160,7 @@ async function fetchServerSnaps(){
 $("syncSave").onclick = ()=>{
   cfg.syncUrl = $("syncUrl").value.trim();
   cfg.syncTok = $("syncTok").value.trim();
+  cfg.syncTest = $("syncTest").checked;
   save(LS.cfg,cfg);
   if(cfg.syncUrl && war) fetchServerSnaps().then(c=>{ if(c) renderAll() });
   else $("syncMeta").textContent = "Cloud sync off — statuses only record while a page is open.";
