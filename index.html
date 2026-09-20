@@ -191,7 +191,7 @@ details.settings summary{cursor:pointer}
     <div class="topline">
       <h1>War <span>Ledger</span></h1>
       <div class="vsline" id="vsline" hidden></div>
-      <button id="switchWar" class="ghost" hidden>⟵ change war</button>
+      <button id="switchWar" hidden>⟵ Dashboard</button>
       <div class="meta" style="margin-left:auto"><span class="statusdot" id="dot"></span><span id="pollmeta">not connected</span></div>
     </div>
   </div>
@@ -1668,15 +1668,22 @@ $("csvBtn").onclick=()=>{
 
 $("switchWar").onclick = async ()=>{
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
-  war=null; localStorage.removeItem(LS.war);
-  attacks=[]; attackIds=new Set(); snaps=[]; lastStatus={}; memberDir={};
-  enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null; armoury=[]; armIds=new Set(); ptsGiven=[]; ptsIds=new Set(); refills=[]; refillIds=new Set();
+  // keep `war` and its stored copy: this is "back to the dashboard", not "forget
+  // this war" — the picker's Continue button needs it to still be there.
+  const wasTracking = war;
   liveMode=true;
   for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=true;
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
-  $("pollmeta").textContent="pick a war"; $("dot").className="statusdot";
+  $("pollmeta").textContent="dashboard"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
-  $("warpick").hidden=false; $("homeCard").hidden=false; $("homeArmCard").hidden=false; renderHome(); renderHomeArm();
+  if(wasTracking){
+    $("resumeWar").hidden=false;
+    $("resumeWar").textContent = "Continue tracking " + (wasTracking.oppName||"last war") + " ⟶";
+  }
+  $("warpick").hidden=false; $("homeCard").hidden=false; $("homeArmCard").hidden=false;
+  renderHome(); renderHomeArm();
+  if(!homeRows) loadHome();
+  if(!homeArm) loadHomeArm();
   window.scrollTo({top:0});
 };
 
