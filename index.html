@@ -123,6 +123,9 @@ th,td{padding:6px 10px; text-align:right; border-bottom:1px solid var(--line); w
 th{color:var(--faint); font-weight:700; font-size:12.5px; letter-spacing:.06em; text-transform:uppercase;
   cursor:pointer; user-select:none; position:sticky; top:0; background:#181C21; white-space:nowrap}
 th.sorted{color:var(--amber)}
+.sortsub{cursor:pointer}
+.sortsub:hover{color:var(--text)}
+.sortsub.on{color:var(--amber); font-weight:700}
 th:first-child,td:first-child{text-align:left}
 td.name{font-weight:600; font-size:16px}
 tbody tr:hover td{background:#22272D}
@@ -497,7 +500,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:43</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 11:48</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -1202,13 +1205,22 @@ function renderTable(){
   $("tblScope").textContent = liveMode? "· live" : "· up to "+fmtDT(scrubT)+" TCT";
   let hh="";
   for(const [k,label] of COLS){
-    const s=k===sortKey?` class="sorted"`:"";
-    const sub = split && ["of","rg","ag","rl"].includes(k) ? `<div class="sub">pre · post</div>`:"";
-    hh+=`<th data-k="${k}"${s}>${label}${sub}</th>`;
+    // "of" and "ag" are the only cells that render a pre · post pair, so they are
+    // the only headers that offer those as separate sorts
+    const splitK = split && (k==="of"||k==="ag");
+    const on = splitK? [k,k+"1",k+"2"].includes(sortKey) : k===sortKey;
+    const sub = splitK
+      ? `<div class="sub"><span data-k="${k}1" class="sortsub${sortKey===k+"1"?" on":""}">pre</span> · <span data-k="${k}2" class="sortsub${sortKey===k+"2"?" on":""}">post</span></div>`
+      : "";
+    hh+=`<th data-k="${k}"${on?' class="sorted"':''}>${label}${sub}</th>`;
   }
   $("tblHead").innerHTML=hh;
-  for(const th of $("tblHead").children) th.onclick=()=>{ const k=th.dataset.k;
-    if(sortKey===k) sortDir*=-1; else { sortKey=k; sortDir = k==="name"?1:-1 } renderTable() };
+  $("tblHead").onclick=e=>{
+    const el=e.target.closest("[data-k]"); if(!el) return;
+    const k=el.dataset.k;
+    if(sortKey===k) sortDir*=-1; else { sortKey=k; sortDir = k==="name"?1:-1 }
+    renderTable();
+  };
   let body=""; const tot={of1:0,of2:0,ag1:0,ag2:0,rg:0,rl:0,as:0};
   for(const r of rows){
     tot.of1+=r.of1;tot.of2+=r.of2;tot.ag1+=r.ag1;tot.ag2+=r.ag2;tot.rg+=r.rg;tot.rl+=r.rl;tot.as+=r.as;
