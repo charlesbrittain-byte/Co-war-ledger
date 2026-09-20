@@ -279,6 +279,7 @@ details.settings summary{cursor:pointer}
   <div class="row">
     <select id="warSel"></select>
     <button id="applyWar" class="primary">Track this war</button>
+    <button id="resumeWar" class="ghost" hidden>Continue tracking ⟶</button>
   </div>
   <div class="row">
     <label class="inl">Start <input type="datetime-local" id="cStart"></label>
@@ -293,6 +294,7 @@ details.settings summary{cursor:pointer}
   <div class="row">
     <label class="inl">Terms agreed at (TCT) <input type="datetime-local" id="termsInput"></label>
     <button id="termsNow">Terms made now</button>
+    <button id="termsFromStart">Termed from start</button>
     <button id="termsSuggest">Suggest from stats</button>
     <button id="termsClear" class="ghost">clear</button>
   </div>
@@ -818,30 +820,89 @@ function namesFromAttacks(id){
 }
 
 /* ---------- terms suggestion ---------- */
-$("termsSuggest").onclick = ()=>{
-  const inc = attacks.filter(a=>isWarAtk(a)&&a.dFac==war.facId).map(a=>a.t);
-  const out = attacks.filter(a=>isWarAtk(a)&&a.aFac==war.facId).map(a=>a.t);
-  const t0=war.start, t1=clampT(now()); const bin=1800;
-  const bins=Math.max(2,Math.ceil((t1-t0)/bin));
-  function best(series){
-    if(series.length<8) return null;
-    const cnt=new Array(bins).fill(0);
-    for(const t of series){ const i=Math.min(bins-1,Math.floor((t-t0)/bin)); if(i>=0)cnt[i]++ }
-    let bi=-1,bs=0;
-    for(let i=1;i<bins;i++){
-      const pre=cnt.slice(0,i).reduce((a,b)=>a+b,0)/i;
-      const postN=cnt.slice(i).reduce((a,b)=>a+b,0), post=postN/(bins-i);
-      if(postN>=5 && post>Math.max(1,pre*3) && post-pre>bs){ bs=post-pre; bi=i }
-    }
-    return bi<0? null : {ts:t0+bi*bin, score:bs};
+/* Terms detection.
+   The attack log only sees terms indirectly: you infer them from a change in
+   hit rate. Status samples see the thing itself — terms means a side stops
+   turtling, so its members go from hidden (self-hosp, hospital, abroad) to
+   attackable within minutes. That signal is far sharper, so it wins when
+   snapshots cover the war; the hit-rate heuristic stays as the fallback for
+   wars recorded before the worker existed. */
+function binnedSplit(series, t0, t1, bin, minPost){
+  const bins=Math.max(4,Math.ceil((t1-t0)/bin));
+  const cnt=new Array(bins).fill(0);
+  for(const t of series){ const i=Math.min(bins-1,Math.floor((t-t0)/bin)); if(i>=0)cnt[i]++ }
+  let bi=-1,bs=0;
+  for(let i=2;i<bins-1;i++){
+    const pre=cnt.slice(0,i).reduce((a,b)=>a+b,0)/i;
+    const postN=cnt.slice(i).reduce((a,b)=>a+b,0), post=postN/(bins-i);
+    if(postN>=minPost && post>Math.max(1,pre*2.5) && post-pre>bs){ bs=post-pre; bi=i }
   }
-  const bIn=best(inc), bOut=best(out);
-  let pick=null, who="";
-  if(bIn && (!bOut || bIn.score>=bOut.score)){ pick=bIn; who="incoming hits on your side jump — looks like your faction opened up" }
-  else if(bOut){ pick=bOut; who="your outgoing hit rate jumps — looks like they opened up" }
-  if(!pick){ $("termsHint").textContent="No clear pattern break in either direction yet — you may not have termed, or set it manually."; return }
+  return bi<0? null : {ts:t0+bi*bin, score:bs};
+}
+function exposureSeries(t0,t1,bin){
+  if(!snaps.length || snaps[0].t>t1-bin*3) return null;
+  const state={}, pts=[];
+  let si=0;
+  for(let t=t0; t<=t1; t+=bin){
+    while(si<snaps.length && snaps[si].t<=t){
+      for(const [id,v] of Object.entries(snaps[si].ch)) state[id]=v[0];
+      si++;
+    }
+    const all=Object.values(state);
+    if(all.length<4){ pts.push(null); continue }
+    const open=all.filter(x=>x==="Okay").length;
+    pts.push(open/all.length);
+  }
+  return pts.some(x=>x!=null)? pts : null;
+}
+$("termsSuggest").onclick = ()=>{
+  const t0=war.start, t1=clampT(now()), bin=1800;
+  // 1) status: the moment our side stops hiding
+  const exp=exposureSeries(t0,t1,bin);
+  let pick=null, who="", how="";
+  if(exp){
+    let bi=-1, bs=0;
+    for(let i=2;i<exp.length-1;i++){
+      const pre=exp.slice(0,i).filter(x=>x!=null), post=exp.slice(i).filter(x=>x!=null);
+      if(pre.length<2||post.length<2) continue;
+      const a=pre.reduce((x,y)=>x+y,0)/pre.length, b=post.reduce((x,y)=>x+y,0)/post.length;
+      if(b-a>0.18 && b-a>bs){ bs=b-a; bi=i }
+    }
+    if(bi>0){ pick={ts:t0+bi*bin}; how="status";
+      who=`your side stops hiding — the share of members sitting attackable jumps by ${Math.round(bs*100)} points`; }
+  }
+  // 2) fallback: hit-rate break in either direction
+  if(!pick){
+    const inc=attacks.filter(a=>isWarAtk(a)&&a.dFac==war.facId).map(a=>a.t);
+    const out=attacks.filter(a=>isWarAtk(a)&&a.aFac==war.facId).map(a=>a.t);
+    const bIn=inc.length>=8? binnedSplit(inc,t0,t1,bin,5):null;
+    const bOut=out.length>=8? binnedSplit(out,t0,t1,bin,5):null;
+    if(bIn && (!bOut || bIn.score>=bOut.score)){ pick=bIn; how="hits"; who="incoming hits on your side jump — looks like your faction opened up" }
+    else if(bOut){ pick=bOut; how="hits"; who="your outgoing hit rate jumps — looks like they opened up" }
+  }
+  if(!pick){
+    $("termsHint").textContent = snaps.length
+      ? "No clear break in either the hit rate or who was hiding — you may not have termed. Set it manually, or use Termed from start."
+      : "No clear pattern break yet, and there are no status recordings for this war — the hit log alone is a weak signal. Set it manually, or use Termed from start.";
+    return;
+  }
   war.terms=pick.ts; save(LS.war,war); $("termsInput").value=tsToLocalInput(pick.ts);
-  $("termsHint").textContent="Suggested terms at "+fmtDT(pick.ts)+" TCT: "+who+". Adjust the time if it's off.";
+  $("termsHint").innerHTML = `Suggested terms at <b>${fmtDT(pick.ts)}</b> TCT: ${who}. `
+    + (how==="status"
+       ? "Read from live status recordings, which is the stronger signal."
+       : "Read from the hit log only — no status recordings cover this war, so treat it as a rough guess.")
+    + " Adjust the time if it's off.";
+  renderAll();
+};
+$("resumeWar").onclick=()=>{
+  if(!war) return;
+  attacks=load(LS.atk(war.warId))||[]; attackIds=new Set(attacks.map(a=>a.id));
+  snaps=load(LS.snap(war.warId))||[]; rebuildStatusFromSnaps();
+  startTracking();
+};
+$("termsFromStart").onclick=()=>{
+  war.terms=war.start; save(LS.war,war); $("termsInput").value=tsToLocalInput(war.terms);
+  $("termsHint").textContent="Terms set to the war start — the whole war counts as post-terms, so the table shows no pre/post split.";
   renderAll();
 };
 $("termsNow").onclick=()=>{ war.terms=now(); save(LS.war,war); $("termsInput").value=tsToLocalInput(war.terms); renderAll() };
@@ -1800,16 +1861,17 @@ function tsToLocalInput(t){ return new Date(t*1000).toISOString().slice(0,16) }
 (function boot(){
   if(cfg.key){
     $("apikey").value=cfg.key;
-    if(war){
-      attacks=load(LS.atk(war.warId))||[]; attackIds=new Set(attacks.map(a=>a.id));
-      snaps=load(LS.snap(war.warId))||[]; rebuildStatusFromSnaps();
-      $("setup").hidden=true; startTracking();
-      loadWarList().then(()=>{}); // warm the picker in case they switch
-      return;
-    }
-    // key saved but no war picked yet
+    // Always open on the dashboard, even with a war saved: the war is one click
+    // away, and landing inside it made the overview easy to miss.
     $("setup").hidden=true;
-    loadWarList().then(()=>{ $("warpick").hidden=false; $("homeCard").hidden=false; renderHome() }).catch(e=>{ $("setup").hidden=false; showErr(e.message) });
+    if(war){
+      $("resumeWar").hidden=false;
+      $("resumeWar").textContent = "Continue tracking " + (war.oppName||"last war") + " ⟶";
+    }
+    loadWarList()
+      .then(()=>{ $("warpick").hidden=false; $("homeCard").hidden=false; $("homeArmCard").hidden=false;
+                  renderHome(); renderHomeArm(); loadHome(); loadHomeArm(); })
+      .catch(e=>{ $("setup").hidden=false; showErr(e.message) });
   }
 })();
 function showErr(m){ const b=$("banner"); b.textContent=m; b.classList.add("show") }
