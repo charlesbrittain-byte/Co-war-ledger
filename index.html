@@ -13,6 +13,9 @@
   --up:#7FB069; --down:#D0555B; --amber:#D9A036; --steel:#5E8CA8;
   /* brighter than --up/--down so hit ticks stay legible on the dark status bands */
   --tick-out:#A6E06A; --tick-in:#FF7B82;
+  /* armoury item colours, kept distinct against the dark bands */
+  --it-xan:#F2F4F6; --it-sfak:#E04B52; --it-fak:#4C9BE0; --it-morph:#B06FE0;
+  --it-blood:#57B26A; --it-other:#7C858E;
   --tl-ok:#2E4633; --tl-ehosp:#7A3336; --tl-shosp:#8A6420; --tl-travel:#2F4A5C; --tl-other:#3A3F46;
 }
 *{box-sizing:border-box; margin:0; padding:0}
@@ -129,9 +132,12 @@ td.name:hover{color:var(--amber)}
 .tl-mark{position:absolute; top:0; bottom:0; width:2px; background:var(--amber); opacity:.9; z-index:3}
 /* armoury usage ticks: full-height so they read as events, not status */
 .tl-tick.am{top:12%; height:76%; width:3px}
-.tl-tick.am.xan{background:#B98BD9}
-.tl-tick.am.blood{background:#D0555B}
-.tl-tick.am.other{background:var(--steel)}
+.tl-tick.am.xan{background:var(--it-xan)}
+.tl-tick.am.sfak{background:var(--it-sfak)}
+.tl-tick.am.fak{background:var(--it-fak)}
+.tl-tick.am.morph{background:var(--it-morph)}
+.tl-tick.am.blood{background:var(--it-blood)}
+.tl-tick.am.other{background:var(--it-other)}
 .tl-tall .tl-tick.am{width:4px}
 /* taller rows: same data, more room to read it */
 .tl-tall .tl-band{height:28px}
@@ -280,18 +286,6 @@ details.settings summary{cursor:pointer}
   <p class="hint" id="tlHint">Status is sampled from the members list while this page is open, so bands start from when tracking began. Hit-log data (the table above) backfills automatically either way.</p>
 </section>
 
-<!-- ENEMY WATCH -->
-<section id="enemyCard" class="card" hidden>
-  <h2>Enemy watch — who's attackable, who's medding out</h2>
-  <div class="tblwrap">
-    <table id="etbl" style="min-width:560px">
-      <thead><tr><th style="text-align:left">Enemy</th><th>Now</th><th>Med-outs</th><th>Our hits on them</th><th style="text-align:left">Farmed by</th></tr></thead>
-      <tbody id="etblBody"></tbody>
-    </table>
-  </div>
-  <p class="hint" id="enemyHint">A med-out is logged when an enemy leaves hospital well before their timer — meds or a revive. Attackable players sort to the top; hospital exits show a countdown. Sampled while the page is open.</p>
-</section>
-
 <!-- MED-OUT DETECTOR (from the hit log) -->
 <section id="medCard" class="card" hidden>
   <div class="scrubhead">
@@ -331,14 +325,17 @@ details.settings summary{cursor:pointer}
   </div>
   <div id="armRows"></div>
   <div class="legend">
-    <span><i style="background:#B98BD9;height:10px;width:3px"></i>xanax</span>
-    <span><i style="background:var(--down);height:10px;width:3px"></i>blood bag</span>
-    <span><i style="background:var(--steel);height:10px;width:3px"></i>other item</span>
+    <span><i style="background:var(--it-xan);height:10px;width:3px"></i>xanax</span>
+    <span><i style="background:var(--it-sfak);height:10px;width:3px"></i>small first aid kit</span>
+    <span><i style="background:var(--it-fak);height:10px;width:3px"></i>first aid kit</span>
+    <span><i style="background:var(--it-morph);height:10px;width:3px"></i>morphine</span>
+    <span><i style="background:var(--it-blood);height:10px;width:3px"></i>blood bag</span>
+    <span><i style="background:var(--it-other);height:10px;width:3px"></i>other item</span>
     <span><i style="background:var(--amber)"></i>war starts</span>
   </div>
   <div class="tblwrap" style="margin-top:10px">
-    <table id="artbl" style="min-width:560px">
-      <thead><tr><th style="text-align:left">Member</th><th>Xanax before war</th><th>Xanax in war</th><th>Blood bags</th><th>Other</th></tr></thead>
+    <table id="artbl" style="min-width:740px">
+      <thead><tr><th style="text-align:left">Member</th><th>Xanax before war</th><th>Xanax in war</th><th>Small FAK</th><th>First aid</th><th>Morphine</th><th>Blood bags</th><th>Other</th></tr></thead>
       <tbody id="artblBody"></tbody>
       <tfoot><tr id="artblFoot"></tr></tfoot>
     </table>
@@ -364,14 +361,6 @@ details.settings summary{cursor:pointer}
     </table>
   </div>
   <p class="hint" id="drugHint">Torn keeps personal stats as <b>daily snapshots</b>, so these are counted between whole-day boundaries (00:00 TCT), not the exact war clock. Press Load to fetch — it's one call per member per boundary, so it runs on demand rather than on every poll.</p>
-</section>
-
-<!-- RETAL WATCH -->
-<section id="retalCard" class="card" hidden>
-  <h2>Retal watch</h2>
-  <div id="retalSummary" class="row" style="font-size:15px"></div>
-  <div id="retalMissed" class="hint"></div>
-  <p class="hint">Every incoming hit opens a ~5 minute window where hitting the attacker back pays bonus respect. Claimed = someone on your side hit that enemy inside the window (approximate, from the attack log).</p>
 </section>
 
 <!-- HIT QUALITY -->
@@ -674,8 +663,7 @@ async function pollScore(){
 /* ---------- polling loops ---------- */
 function startTracking(){
   $("warpick").hidden = true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","drugCard","retalCard","qualityCard"]) $(id).hidden=false;
-  $("enemyCard").hidden = !war.oppId;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","drugCard","qualityCard"]) $(id).hidden=false;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
   drugRows = load(LS.drug(war.warId))||null;
@@ -695,7 +683,7 @@ function schedule(){
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
   timers.atk = setInterval(()=>tick(false), Math.max(30,cfg.pAtk)*1000);
   timers.mem = setInterval(async ()=>{ if(paused||!war) return; try{ await pollMembers(); await pollEnemy(); await pollChain(); await fetchServerSnaps(); ok(); renderAll() }catch(e){ fail(e) } }, Math.max(30,cfg.pMem)*1000);
-  timers.scr = setInterval(()=>{ if(liveMode){ scrubT=clampT(now()); renderScrubOnly() } renderHeader(); renderEnemy() }, 15000);
+  timers.scr = setInterval(()=>{ if(liveMode){ scrubT=clampT(now()); renderScrubOnly() } renderHeader() }, 15000);
 }
 async function tick(first){
   if(paused||!war) return;
@@ -794,7 +782,7 @@ const COLS=[
   ["net","Net",r=>r.net],
   ["lastHit","Last hit",r=>r.lastHit],
 ];
-function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderEnemy(); renderMedLog(); renderArmoury(); renderDrugs(); renderRetal(); renderQuality(); }
+function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderMedLog(); renderArmoury(); renderDrugs(); renderQuality(); }
 
 function renderQuality(){
   const per={};
@@ -825,66 +813,8 @@ function renderQuality(){
   $("qtblBody").innerHTML=html;
 }
 
-function renderEnemy(){
-  const ids=Object.keys(enemyDir);
-  if(!ids.length){ $("etblBody").innerHTML=`<tr><td colspan="5" class="meta">Enemy roster loads on the next status poll.</td></tr>`; return }
-  const t=now();
-  const hitsOn={}, farmers={};
-  for(const a of attacks){ if(a.aFac==war.facId && a.dId && WIN.has(a.res)){
-    hitsOn[a.dId]=(hitsOn[a.dId]||0)+1;
-  }}
-  for(const ev of medEvents){
-    for(const a of attacks){
-      if(a.t<ev.t) continue; if(a.t>ev.t+600) break;
-      if(a.dId==ev.id && a.aFac==war.facId && a.aId && WIN.has(a.res)){
-        const f=(farmers[ev.id]=farmers[ev.id]||{}); f[a.aName]=(f[a.aName]||0)+1;
-      }
-    }
-  }
-  const medCount={}; for(const ev of medEvents) medCount[ev.id]=(medCount[ev.id]||0)+1;
-  const rank=s=> s.state==="Okay"?0 : s.state==="Hospital"?1 : (s.state==="Traveling"||s.state==="Abroad")?2:3;
-  const rows=ids.map(id=>({id, name:enemyDir[id].name, s:enemyStatus[id]||{state:"?",until:0}}))
-    .sort((a,b)=> rank(a.s)-rank(b.s) || (a.s.until||9e12)-(b.s.until||9e12));
-  let html="";
-  for(const r of rows){
-    let nowCell;
-    if(r.s.state==="Okay") nowCell=`<span class="st ok">okay</span>`;
-    else if(r.s.state==="Hospital"){ const left=Math.max(0,(r.s.until||0)-t);
-      nowCell=`<span class="st hosp">hosp${left? " · out in "+fmtLeft(left):""}</span>` }
-    else if(r.s.state==="Traveling"||r.s.state==="Abroad") nowCell=`<span class="st travel">${r.s.state.toLowerCase()}</span>`;
-    else nowCell=`<span class="st other">${esc(String(r.s.state).toLowerCase())}</span>`;
-    const f=farmers[r.id];
-    const fTxt = f? Object.entries(f).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([n,c])=>`${esc(n)} (${c})`).join(", ") : "";
-    html+=`<tr><td style="text-align:left" class="name">${esc(r.name)}</td>
-      <td>${nowCell}</td>
-      <td class="${medCount[r.id]?'':'zero'}">${medCount[r.id]||0}</td>
-      <td class="${hitsOn[r.id]?'':'zero'}">${hitsOn[r.id]||0}</td>
-      <td style="text-align:left" class="meta">${fTxt}</td></tr>`;
-  }
-  $("etblBody").innerHTML=html;
-}
 function fmtLeft(s){ if(s<60) return s+"s"; if(s<3600) return Math.ceil(s/60)+"m"; return Math.floor(s/3600)+"h"+Math.ceil((s%3600)/60)+"m" }
 
-function renderRetal(){
-  const T=scrubT, t=now();
-  const outs = attacks.filter(a=>a.t<=T && a.aFac==war.facId && a.aId && WIN.has(a.res));
-  let opps=0, claimed=0; const claimers={}; const missed=[];
-  for(const a of attacks){
-    if(a.t>T) break;
-    if(!(isWarAtk(a) && a.dFac==war.facId && a.aId && WIN.has(a.res))) continue;
-    opps++;
-    const hit = outs.find(o=> o.dId==a.aId && o.t>a.t && o.t<=a.t+300);
-    if(hit){ claimed++; claimers[hit.aName]=(claimers[hit.aName]||0)+1 }
-    else if(a.t+300 < t) missed.push(a);
-  }
-  if(!opps){ $("retalSummary").innerHTML=`<span class="meta">No retal opportunities logged yet.</span>`; $("retalMissed").textContent=""; return }
-  const pct=Math.round(100*claimed/opps);
-  const top=Object.entries(claimers).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n,c])=>`${esc(n)} (${c})`).join(", ");
-  $("retalSummary").innerHTML=`<span><b class="${pct>=60?'pos':'neg'}">${claimed}/${opps}</b> retal windows claimed (${pct}%)</span>`+
-    (top?`<span class="meta">· top claimers: ${top}</span>`:"");
-  const recent=missed.slice(-5).reverse().map(a=>`${esc(a.aName)} hit ${esc(a.dName)} at ${fmtDT(a.t)}`).join(" · ");
-  $("retalMissed").textContent = recent? "Recently missed: "+recent : "";
-}
 function renderHeader(){
   const v=$("vsline"); v.hidden=false;
   let s="";
@@ -1220,12 +1150,24 @@ for(const id of ["medHits","medBurst","medGap"]) $(id).onchange=()=>{
    "of which armoury" column is the cross-check between the two. */
 let armoury = [], armIds = new Set();
 const ARM_RE = /XID=(\d+)[^>]*>([^<]*)<\/a>\s*used one of the faction's (.+?) items?/i;
+// order matters: "small first aid kit" must be tested before "first aid kit",
+// or every small kit would be counted as a full one
 function armClass(item){
   const s=item.toLowerCase();
   if(s.includes("xanax")) return "xan";
+  if(s.includes("small first aid")) return "sfak";
+  if(s.includes("first aid")) return "fak";
+  if(s.includes("morphine")) return "morph";
   if(s.includes("blood bag")) return "blood";
   return "other";
 }
+const ARM_COLS = [
+  {k:"sfak",  label:"Small FAK",  css:"--it-sfak"},
+  {k:"fak",   label:"First aid",  css:"--it-fak"},
+  {k:"morph", label:"Morphine",   css:"--it-morph"},
+  {k:"blood", label:"Blood bags", css:"--it-blood"},
+  {k:"other", label:"Other",      css:"--it-other"}
+];
 async function syncArmoury(){
   if(!war || war.custom) return;
   const from = war.start - 72*3600;                    // include the build-up window
@@ -1253,11 +1195,10 @@ async function syncArmoury(){
 function armCounts(){
   const per={};
   for(const a of armoury){
-    const p=per[a.id]||(per[a.id]={id:a.id,name:a.name,pre:0,war:0,blood:0,other:0});
+    const p=per[a.id]||(per[a.id]={id:a.id,name:a.name,pre:0,war:0,sfak:0,fak:0,morph:0,blood:0,other:0});
     const c=armClass(a.item);
     if(c==="xan"){ if(a.t<war.start) p.pre++; else p.war++ }
-    else if(c==="blood") p.blood++;
-    else p.other++;
+    else p[c]++;
   }
   return per;
 }
@@ -1285,12 +1226,14 @@ function renderArmoury(){
   }).join("") : `<p class="meta">No armoury use inside the current zoom window.</p>`;
   $("armMeta").textContent = `${fmtDT(t0)} → ${fmtDT(t1)} TCT · follows the timeline zoom`;
   const counts=Object.values(armCounts()).sort((a,b)=>(b.pre+b.war)-(a.pre+a.war));
+  const cell=(v,css)=>`<td class="${v?"":"zero"}" style="${v?`color:var(${css})`:""}">${v||"–"}</td>`;
   $("artblBody").innerHTML = counts.map(r=>
     `<tr><td style="text-align:left" class="name">${esc(r.name)}</td>`
-    + `<td class="${r.pre?'pos':'zero'}">${r.pre||"–"}</td><td class="${r.war?'pos':'zero'}">${r.war||"–"}</td>`
-    + `<td class="${r.blood?'neg':'zero'}">${r.blood||"–"}</td><td class="${r.other?'':'zero'}">${r.other||"–"}</td></tr>`).join("");
+    + cell(r.pre,"--it-xan") + cell(r.war,"--it-xan")
+    + ARM_COLS.map(c=>cell(r[c.k], c.css)).join("") + `</tr>`).join("");
   const S=k=>counts.reduce((s,r)=>s+r[k],0);
-  $("artblFoot").innerHTML=`<td style="text-align:left">Total</td><td>${S("pre")}</td><td>${S("war")}</td><td>${S("blood")}</td><td>${S("other")}</td>`;
+  $("artblFoot").innerHTML=`<td style="text-align:left">Total</td><td>${S("pre")}</td><td>${S("war")}</td>`
+    + ARM_COLS.map(c=>`<td>${S(c.k)}</td>`).join("");
   $("armHint").innerHTML = `Each tick is one item taken from the <b>faction armoury</b>, at the exact minute it happened — the amber line is the war start. `
     + `Rows are sorted by how much someone took. This only sees armoury items: <b>xanax a member bought themselves never appears here</b>, so these are a floor, not a total. `
     + `The "of which armoury" column in the xanax card compares this against their real personal-stat count.`;
@@ -1398,7 +1341,7 @@ $("switchWar").onclick = async ()=>{
   attacks=[]; attackIds=new Set(); snaps=[]; lastStatus={}; memberDir={};
   enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null; drugRows=null; armoury=[]; armIds=new Set();
   liveMode=true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","enemyCard","medCard","armCard","drugCard","retalCard","qualityCard"]) $(id).hidden=true;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","drugCard","qualityCard"]) $(id).hidden=true;
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
   $("pollmeta").textContent="pick a war"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
