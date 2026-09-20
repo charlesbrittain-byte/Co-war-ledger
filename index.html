@@ -343,26 +343,6 @@ details.settings summary{cursor:pointer}
   <p class="hint" id="armHint"></p>
 </section>
 
-<!-- XANAX & REFILLS -->
-<section id="drugCard" class="card" hidden>
-  <div class="scrubhead">
-    <h2 style="margin:0">Xanax &amp; refills — build-up and war spend</h2>
-    <div class="meta" id="drugMeta"></div>
-  </div>
-  <div class="row">
-    <button id="drugLoad" class="primary">Load from Torn</button>
-    <span class="meta" id="drugProg"></span>
-  </div>
-  <div class="tblwrap" style="margin-top:10px">
-    <table id="drtbl" style="min-width:620px">
-      <thead><tr><th style="text-align:left">Member</th><th>Level</th><th>Xanax in the 72h before<span class="sub" id="drugPreHdr"></span></th><th>Xanax during the war</th><th>of which armoury<span class="sub"> (both windows)</span></th><th>Refills during the war</th></tr></thead>
-      <tbody id="drtblBody"></tbody>
-      <tfoot><tr id="drtblFoot"></tr></tfoot>
-    </table>
-  </div>
-  <p class="hint" id="drugHint">Torn keeps personal stats as <b>daily snapshots</b>, so these are counted between whole-day boundaries (00:00 TCT), not the exact war clock. Press Load to fetch — it's one call per member per boundary, so it runs on demand rather than on every poll.</p>
-</section>
-
 <!-- HIT QUALITY -->
 <section id="qualityCard" class="card" hidden>
   <h2>Hit quality — who's punching down</h2>
@@ -425,7 +405,7 @@ details.settings summary{cursor:pointer}
 const LS = {
   cfg:"twl_cfg", war:"twl_war",
   atk:id=>"twl_atk_"+id, snap:id=>"twl_snap_"+id,
-  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id, drug:id=>"twl_drug_"+id, arm:id=>"twl_arm_"+id
+  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id,  arm:id=>"twl_arm_"+id
 };
 let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60, medHits:3, medBurst:60, medGap:300};
 let war = load(LS.war) || null;   // {facId,facName,warId,oppId,oppName,start,end,terms,label,custom}
@@ -667,10 +647,9 @@ async function pollScore(){
 /* ---------- polling loops ---------- */
 function startTracking(){
   $("warpick").hidden = true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","drugCard","qualityCard"]) $(id).hidden=false;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=false;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
-  drugRows = load(LS.drug(war.warId))||null;
   armoury = load(LS.arm(war.warId))||[]; armIds = new Set();
   $("settings").hidden=false;
   $("switchWar").hidden=false;
@@ -786,7 +765,7 @@ const COLS=[
   ["net","Net",r=>r.net],
   ["lastHit","Last hit",r=>r.lastHit],
 ];
-function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderMedLog(); renderArmoury(); renderDrugs(); renderQuality(); }
+function renderAll(){ renderHeader(); renderScrubOnly(); renderTable(); renderTimelines(); renderMedLog(); renderArmoury(); renderQuality(); }
 
 function renderQuality(){
   const per={};
@@ -1150,8 +1129,7 @@ for(const id of ["medHits","medBurst","medGap"]) $(id).onchange=()=>{
    Faction news logs every item taken from the armoury with an exact timestamp,
    which personalstats cannot give (those are daily totals). The catch is that
    it only sees FACTION armoury items — xanax a member bought themselves never
-   appears here, so treat these as a floor, not a total. The xanax card's
-   "of which armoury" column is the cross-check between the two. */
+   appears here, so treat these as a floor, not a total. */
 let armoury = [], armIds = new Set();
 const ARM_RE = /XID=(\d+)[^>]*>([^<]*)<\/a>\s*used one of the faction's (.+?) items?/i;
 // order matters: "small first aid kit" must be tested before "first aid kit",
@@ -1240,85 +1218,9 @@ function renderArmoury(){
     + ARM_COLS.map(c=>`<td>${S(c.k)}</td>`).join("");
   $("armHint").innerHTML = `Each tick is one item taken from the <b>faction armoury</b>, at the exact minute it happened — the amber line is the war start. `
     + `Rows are sorted by how much someone took. This only sees armoury items: <b>xanax a member bought themselves never appears here</b>, so these are a floor, not a total. `
-    + `The "of which armoury" column in the xanax card compares this against their real personal-stat count.`;
+    + `Someone showing little here may still be using plenty of their own.`;
 }
 
-/* ---------- xanax & refills ----------
-   Torn's personalstats are cumulative totals kept as DAILY snapshots (00:00
-   TCT), so these figures are diffs between whole-day boundaries, not the exact
-   war clock — the response tells us which snapshot it actually used and that
-   is what the header reports. For a war still running we use the live total
-   for the closing figure, which v1 gives and v2 (snapshot-only) does not.
-   One call per member per boundary, so it runs on a button, not on a poll. */
-let drugRows = null;
-async function pstatsAt(id, ts){
-  const j = await api(`/user/${id}/personalstats`, {stat:"xantaken,refills", timestamp:ts});
-  const o={};
-  for(const s of (j.personalstats||[])) o[s.name]={v:+s.value||0, ts:s.timestamp||ts};
-  return o;
-}
-async function pstatsLive(id){
-  const u=new URL("https://api.torn.com/user/"+id);
-  u.searchParams.set("selections","personalstats");
-  u.searchParams.set("stat","xantaken,refills");
-  u.searchParams.set("key",cfg.key); u.searchParams.set("comment","WarLedger");
-  const j=await (await fetch(u)).json();
-  if(j && j.error) throw new Error(j.error.error+" (code "+j.error.code+")");
-  const p=(j.personalstats)||{}; const t=now();
-  return {xantaken:{v:+p.xantaken||0, ts:t}, refills:{v:+p.refills||0, ts:t}};
-}
-async function loadDrugStats(){
-  const ids=Object.keys(memberDir);
-  if(!ids.length){ $("drugProg").textContent="No member list yet — connect and let the members poll run first."; return }
-  const ongoing = !war.end || war.end>now();
-  const tPre=war.start-72*3600, tStart=war.start, tEnd=ongoing? null : war.end;
-  const out=[]; let done=0, failed=0; const bounds={pre:new Set(), start:new Set(), end:new Set()};
-  $("drugLoad").disabled=true;
-  for(const id of ids){
-    $("drugProg").textContent=`fetching ${++done} of ${ids.length}…`;
-    try{
-      const [a,b,c] = await Promise.all([
-        pstatsAt(id,tPre), pstatsAt(id,tStart),
-        tEnd? pstatsAt(id,tEnd) : pstatsLive(id)
-      ]);
-      if(a.xantaken) bounds.pre.add(a.xantaken.ts);
-      if(b.xantaken) bounds.start.add(b.xantaken.ts);
-      if(c.xantaken) bounds.end.add(c.xantaken.ts);
-      out.push({ id:+id, name:(memberDir[id]||{}).name||id, lvl:(memberDir[id]||{}).lvl||0,
-        xanPre: Math.max(0,(b.xantaken?.v||0)-(a.xantaken?.v||0)),
-        xanWar: Math.max(0,(c.xantaken?.v||0)-(b.xantaken?.v||0)),
-        refWar: Math.max(0,(c.refills?.v||0)-(b.refills?.v||0)) });
-    }catch(e){
-      failed++;
-      out.push({id:+id, name:(memberDir[id]||{}).name||id, lvl:(memberDir[id]||{}).lvl||0, err:e.message});
-    }
-    await new Promise(r=>setTimeout(r,120));           // stay well under Torn's rate limit
-  }
-  drugRows={rows:out, bounds:{pre:[...bounds.pre], start:[...bounds.start], end:[...bounds.end]}, at:now(), ongoing};
-  save(LS.drug(war.warId), drugRows);
-  $("drugLoad").disabled=false;
-  $("drugProg").textContent = failed? `${failed} of ${ids.length} member${failed>1?"s":""} couldn't be read` : "";
-  renderDrugs();
-}
-function renderDrugs(){
-  const box=$("drtblBody");
-  if(!drugRows){ box.innerHTML=`<tr><td colspan="6" class="meta">Not loaded yet — press Load from Torn.</td></tr>`; $("drtblFoot").innerHTML=""; $("drugMeta").textContent=""; return }
-  const rows=[...drugRows.rows].sort((a,b)=>(b.xanPre||0)-(a.xanPre||0) || (b.refWar||0)-(a.refWar||0));
-  const fmtB=a=>a.length? a.sort().map(t=>fmtDT(t).slice(0,5)).join(" / ") : "?";
-  $("drugPreHdr").textContent = ` (${fmtB(drugRows.bounds.pre)} → ${fmtB(drugRows.bounds.start)})`;
-  $("drugMeta").textContent = `loaded ${ago(drugRows.at)}` + (drugRows.ongoing? " · war still running, closing figure is live" : "");
-  box.innerHTML = rows.map(r=> r.err
-    ? `<tr><td style="text-align:left" class="name">${esc(r.name)}</td><td class="lvl">${r.lvl||"–"}</td><td colspan="4" class="meta">${esc(r.err)}</td></tr>`
-    : `<tr><td style="text-align:left" class="name">${esc(r.name)}</td><td class="lvl">${r.lvl||"–"}</td>`
-      + `<td class="${r.xanPre?'pos':'zero'}">${r.xanPre||"–"}</td>`
-      + `<td class="${r.xanWar?'pos':'zero'}">${r.xanWar||"–"}</td>`
-      + `<td class="meta">${(()=>{const a=armCounts()[r.id]; const n=a?a.pre+a.war:0; return n||"–"})()}</td>`
-      + `<td class="${r.refWar?'':'zero'}" style="${r.refWar?'color:var(--amber)':''}">${r.refWar||"–"}</td></tr>`).join("");
-  const S=k=>rows.reduce((s,r)=>s+(r[k]||0),0);
-  const ac=Object.values(armCounts()).reduce((s2,a)=>s2+a.pre+a.war,0);
-  $("drtblFoot").innerHTML=`<td style="text-align:left">Total</td><td class="lvl">––</td><td>${S("xanPre")}</td><td>${S("xanWar")}</td><td>${ac||"–"}</td><td>${S("refWar")}</td>`;
-}
-$("drugLoad").onclick=()=>loadDrugStats().catch(e=>{ $("drugLoad").disabled=false; $("drugProg").textContent=e.message });
 
 /* ---------- csv ---------- */
 $("csvBtn").onclick=()=>{
@@ -1343,9 +1245,9 @@ $("switchWar").onclick = async ()=>{
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
   war=null; localStorage.removeItem(LS.war);
   attacks=[]; attackIds=new Set(); snaps=[]; lastStatus={}; memberDir={};
-  enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null; drugRows=null; armoury=[]; armIds=new Set();
+  enemyDir={}; enemyStatus={}; medEvents=[]; chainInfo=null; warScores=null; armoury=[]; armIds=new Set();
   liveMode=true;
-  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","drugCard","qualityCard"]) $(id).hidden=true;
+  for(const id of ["termsCard","scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=true;
   $("settings").hidden=true; $("switchWar").hidden=true; $("vsline").hidden=true;
   $("pollmeta").textContent="pick a war"; $("dot").className="statusdot";
   try{ await loadWarList() }catch(e){}
@@ -1514,7 +1416,7 @@ $("pauseBtn").onclick=()=>{ paused=!paused; $("pauseBtn").textContent=paused?"Re
 $("forgetWar").onclick=()=>{ if(!war)return; if(!confirm("Clear stored hits and statuses for this war?"))return;
   localStorage.removeItem(LS.atk(war.warId)); localStorage.removeItem(LS.snap(war.warId));
   localStorage.removeItem(LS.esnap(war.warId)); localStorage.removeItem(LS.med(war.warId));
-  localStorage.removeItem(LS.drug(war.warId)); localStorage.removeItem(LS.arm(war.warId));
+  localStorage.removeItem(LS.arm(war.warId));
   localStorage.removeItem(LS.war); location.reload() };
 $("forgetAll").onclick=()=>{ if(!confirm("Forget everything, including the API key?"))return;
   for(const k of Object.keys(localStorage)) if(k.startsWith("twl_")) localStorage.removeItem(k);
