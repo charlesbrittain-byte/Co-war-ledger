@@ -556,7 +556,7 @@ details.settings summary{cursor:pointer}
   </div>
 </details>
 
-<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 21:09</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
+<p class="foot wrap"><span id="buildStamp" style="color:var(--faint)">build 2026-09-20 21:16</span> · All times are TCT (Torn city time / UTC). Data comes straight from api.torn.com using your key and stays in this browser.</p>
 </div>
 
 <div id="mback" class="modal-back">
@@ -581,7 +581,7 @@ details.settings summary{cursor:pointer}
 const LS = {
   cfg:"twl_cfg", war:"twl_war",
   atk:id=>"twl_atk_"+id, snap:id=>"twl_snap_"+id,
-  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id, arm:id=>"twl_arm_"+id,
+  esnap:id=>"twl_esnap_"+id, med:id=>"twl_med_"+id, arm:id=>"twl_arm_"+id, cur:id=>"twl_cur_"+id,
   pts:id=>"twl_pts_"+id, ref:id=>"twl_ref_"+id
 };
 let cfg = load(LS.cfg) || {key:"", pAtk:120, pMem:60, medHits:3, medBurst:60, medGap:300};
@@ -864,9 +864,10 @@ function startTracking(){
   for(const id of ["scrubCard","tableCard","tlCard","medCard","armCard","qualityCard"]) $(id).hidden=false;
   const es = load(LS.esnap(war.warId)); if(es){ enemyDir=es.dir||{}; enemyStatus=es.status||{} }
   medEvents = load(LS.med(war.warId))||[];
-  armoury = load(LS.arm(war.warId))||[]; armIds = new Set();
-  ptsGiven = load(LS.pts(war.warId))||[]; ptsIds = new Set();
-  refills = load(LS.ref(war.warId))||[]; refillIds = new Set();
+  armoury = load(LS.arm(war.warId))||[]; armIds = new Set(armoury.map(a=>a.nid).filter(Boolean));
+  ptsGiven = load(LS.pts(war.warId))||[]; ptsIds = new Set(ptsGiven.map(a=>a.nid).filter(Boolean));
+  refills = load(LS.ref(war.warId))||[]; refillIds = new Set(refills.map(a=>a.nid).filter(Boolean));
+  newsCur = load(LS.cur(war.warId)) || {arm:0, pts:0};
   $("settings").hidden=false;
   $("switchWar").hidden=false;
   $("pAtk").value=cfg.pAtk; $("pMem").value=cfg.pMem;
@@ -884,7 +885,7 @@ function startTracking(){
 function schedule(){
   clearInterval(timers.atk); clearInterval(timers.mem); clearInterval(timers.scr);
   timers.atk = setInterval(()=>tick(false), Math.max(30,cfg.pAtk)*1000);
-  timers.mem = setInterval(async ()=>{ if(paused||!war) return; try{ await pollMembers(); await pollEnemy(); await pollChain(); await fetchServerSnaps(); await fetchTerms(); ok(); renderAll() }catch(e){ fail(e) } }, Math.max(30,cfg.pMem)*1000);
+  timers.mem = setInterval(async ()=>{ if(paused||!war) return; try{ await pollMembers(); await pollChain(); await fetchServerSnaps(); await fetchTerms(); ok(); renderAll() }catch(e){ fail(e) } }, Math.max(30,cfg.pMem)*1000);
   timers.scr = setInterval(()=>{ if(liveMode){ scrubT=clampT(now()); renderScrubOnly() } renderHeader() }, 15000);
 }
 async function tick(first){
@@ -892,7 +893,7 @@ async function tick(first){
   try{
     await syncAttacks();
     await syncArmoury();          // incremental, and skipped entirely for custom windows
-    if(first){ await pollMembers(); await pollEnemy(); await pollChain(); await pollScore() }
+    if(first){ await pollMembers(); await pollChain(); await pollScore() }
     else if(Math.random()<0.4) await pollScore();
     ok(); renderAll();
   }catch(e){ fail(e) }
@@ -1483,7 +1484,7 @@ for(const id of ["medHits","medBurst","medGap"]) $(id).onchange=()=>{
    which personalstats cannot give (those are daily totals). The catch is that
    it only sees FACTION armoury items — xanax a member bought themselves never
    appears here, so treat these as a floor, not a total. */
-let armoury = [], armIds = new Set();
+let armoury = [], armIds = new Set(), newsCur = {arm:0, pts:0};
 let ptsGiven = [], ptsIds = new Set();
 // "Name was given 570 points by Someone" — a faction points gift. Torn does NOT
 // log a member spending points on a refill anywhere in the API, so this is the
@@ -1501,7 +1502,7 @@ function scanRefill(n){
   const m=REFILL_RE.exec(n.text);
   if(!m) return false;
   refillIds.add(n.id);
-  refills.push({t:n.timestamp, id:+m[1], name:m[2], text:m[3].replace(/<[^>]+>/g,"").trim()});
+  refills.push({nid:n.id, t:n.timestamp, id:+m[1], name:m[2], text:m[3].replace(/<[^>]+>/g,"").trim()});
   return true;
 }
 const ARM_RE = /XID=(\d+)[^>]*>([^<]*)<\/a>\s*used one of the faction's (.+?) items?/i;
@@ -1527,8 +1528,14 @@ const ARM_COLS = [
 ];
 async function syncArmoury(){
   if(!war || war.custom) return;
-  const from = war.start - 72*3600;                    // include the build-up window
+  // Only ask for what we have not already read. This used to re-read the whole
+  // 72-hour window every couple of minutes — up to 1,500 records a tick, which
+  // is what burns Torn's daily read limit (error 14).
+  const floor = war.start - 72*3600;                   // include the build-up window
+  const from = newsCur.arm? Math.max(floor, newsCur.arm-120) : floor;
   let to = war.end && war.end<now()? war.end+300 : now();
+  if(to<=from) return;
+  const newest = to;                                   // the loop walks `to` backwards
   let pages=0, added=0;
   while(pages++ < 15){
     const r = await api("/faction/news", {cat:"armoryAction", from, to, limit:100});
@@ -1541,19 +1548,24 @@ async function syncArmoury(){
       const m=ARM_RE.exec(n.text||"");
       if(!m) continue;
       armIds.add(n.id);
-      armoury.push({t:n.timestamp, id:+m[1], name:m[2], item:m[3].trim()});
+      armoury.push({nid:n.id, t:n.timestamp, id:+m[1], name:m[2], item:m[3].trim()});
       added++;
     }
     if(list.length<100 || !isFinite(oldest) || oldest<=from) break;
     to = oldest-1;                                     // walk backwards; news comes newest-first
   }
   if(added){ armoury.sort((a,b)=>a.t-b.t); save(LS.arm(war.warId), armoury) }
+  newsCur.arm = Math.max(newsCur.arm||0, newest-60);
+  save(LS.cur(war.warId), newsCur);
   await syncPoints();
   return added;
 }
 async function syncPoints(){
-  const from = war.start - 72*3600;
+  const floor = war.start - 72*3600;
+  const from = newsCur.pts? Math.max(floor, newsCur.pts-120) : floor;
   let to = war.end && war.end<now()? war.end+300 : now();
+  if(to<=from) return;
+  const newest = to;
   let pages=0, added=0;
   while(pages++ < 10){
     const r = await api("/faction/news", {cat:"giveFunds", from, to, limit:100});
@@ -1566,13 +1578,15 @@ async function syncPoints(){
       const m=PTS_RE.exec(n.text||"");
       if(!m) continue;                        // money gifts and everything else
       ptsIds.add(n.id);
-      ptsGiven.push({t:n.timestamp, id:+m[1], name:m[2], n:+m[3].replace(/,/g,"")});
+      ptsGiven.push({nid:n.id, t:n.timestamp, id:+m[1], name:m[2], n:+m[3].replace(/,/g,"")});
       added++;
     }
     if(list.length<100 || !isFinite(oldest) || oldest<=from) break;
     to = oldest-1;
   }
   if(added){ ptsGiven.sort((a,b)=>a.t-b.t); save(LS.pts(war.warId), ptsGiven); refills.sort((a,b)=>a.t-b.t); save(LS.ref(war.warId), refills) }
+  newsCur.pts = Math.max(newsCur.pts||0, newest-60);
+  save(LS.cur(war.warId), newsCur);
 }
 function armCounts(){
   const per={};
@@ -2082,7 +2096,7 @@ $("pauseBtn").onclick=()=>{ paused=!paused; $("pauseBtn").textContent=paused?"Re
 $("forgetWar").onclick=()=>{ if(!war)return; if(!confirm("Clear stored hits and statuses for this war?"))return;
   localStorage.removeItem(LS.atk(war.warId)); localStorage.removeItem(LS.snap(war.warId));
   localStorage.removeItem(LS.esnap(war.warId)); localStorage.removeItem(LS.med(war.warId));
-  localStorage.removeItem(LS.arm(war.warId)); localStorage.removeItem(LS.pts(war.warId)); localStorage.removeItem(LS.ref(war.warId));
+  localStorage.removeItem(LS.arm(war.warId)); localStorage.removeItem(LS.pts(war.warId)); localStorage.removeItem(LS.cur(war.warId)); localStorage.removeItem(LS.ref(war.warId));
   localStorage.removeItem(LS.war); location.reload() };
 $("forgetAll").onclick=()=>{ if(!confirm("Forget everything, including the API key?"))return;
   for(const k of Object.keys(localStorage)) if(k.startsWith("twl_")) localStorage.removeItem(k);
